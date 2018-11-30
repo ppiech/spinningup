@@ -1,6 +1,8 @@
 import tensorflow as tf
 import numpy as np
 import gym
+import sys
+
 from gym.spaces import Discrete, Box
 
 def mlp(x, sizes, activation=tf.tanh, output_activation=None):
@@ -9,6 +11,26 @@ def mlp(x, sizes, activation=tf.tanh, output_activation=None):
         x = tf.layers.dense(x, units=size, activation=activation)
     return tf.layers.dense(x, units=sizes[-1], activation=output_activation)
 
+def stability_reward(ob):
+    # window = 5
+    # num_spans = int(len(obs)/window)
+    # spans = obs[:num_spans * window].reshape(num_spans, window, obs.shape[1])
+    #
+    # x = 0
+    # for i in range(1, num_spans):
+    #     x += np.linalg.norm(spans[i-1] - spans[i])
+    # x = x / num_spans
+    #
+    # bonus = len(obs) / (1 + x)
+
+    # minimize all values
+    # bonus = len(obs)/(np.linalg.norm(obs))
+
+    # minimize last value
+    bonus = abs(ob[0]) #+ abs(obs[-1][1])
+    #sys.stdout.write('%.3f, '%(bonus))
+    return bonus
+
 def reward_to_go(rews):
     n = len(rews)
     rtgs = np.zeros_like(rews)
@@ -16,8 +38,8 @@ def reward_to_go(rews):
         rtgs[i] = rews[i] + (rtgs[i+1] if i+1 < n else 0)
     return rtgs
 
-def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2, 
-          epochs=50, batch_size=5000, render=False):
+def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
+          epochs=500, batch_size=5000, render=False):
 
     # make environment, check spaces, get obs / act dims
     env = gym.make(env_name)
@@ -62,9 +84,10 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
         obs = env.reset()       # first obs comes from starting distribution
         done = False            # signal from environment that episode is over
         ep_rews = []            # list for rewards accrued throughout ep
+        ep_obs = []
 
         # render first episode of each epoch
-        finished_rendering_this_epoch = False
+        finished_rendering_this_epoch = True
 
         # collect experience by acting in the environment with current policy
         while True:
@@ -79,6 +102,11 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
             # act in the environment
             act = sess.run(actions, {obs_ph: obs.reshape(1,-1)})[0]
             obs, rew, done, _ = env.step(act)
+
+            # Maximize stability_bunus
+            ep_obs.append(obs)
+            #rew = stability_reward(np.array(ep_obs))
+            rew = stability_reward(obs)
 
             # save action, reward
             batch_acts.append(act)
@@ -96,6 +124,9 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                 # reset episode-specific variables
                 obs, done, ep_rews = env.reset(), False, []
 
+                # Reset stability rewuard
+                ep_obs = []
+
                 # won't render again this epoch
                 finished_rendering_this_epoch = True
 
@@ -104,17 +135,17 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                     break
 
         # take a single policy gradient update step
-        batch_loss, _ = sess.run([loss, train_op],
+        batch_log_probs, batch_loss, _ = sess.run([log_probs, loss, train_op],
                                  feed_dict={
                                     obs_ph: np.array(batch_obs),
                                     act_ph: np.array(batch_acts),
                                     weights_ph: np.array(batch_weights)
                                  })
-        return batch_loss, batch_rets, batch_lens
+        return batch_log_probs, batch_loss, batch_rets, batch_lens
 
     # training loop
     for i in range(epochs):
-        batch_loss, batch_rets, batch_lens = train_one_epoch()
+        batch_log_probs, batch_loss, batch_rets, batch_lens = train_one_epoch()
         print('epoch: %3d \t loss: %.3f \t return: %.3f \t ep_len: %.3f'%
                 (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens)))
 

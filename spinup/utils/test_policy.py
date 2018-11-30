@@ -58,6 +58,10 @@ def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True):
 
         a = get_action(o)
         o, r, d, _ = env.step(a)
+
+        #reward standing still:
+        #r =  -abs(o[0] + 0.5) - abs(o[1])* 10
+
         ep_ret += r
         ep_len += 1
 
@@ -82,7 +86,7 @@ if __name__ == '__main__':
     parser.add_argument('--itr', '-i', type=int, default=-1)
     parser.add_argument('--deterministic', '-d', action='store_true')
     args = parser.parse_args()
-    env, get_action = load_policy(args.fpath, 
+    env, get_action = load_policy(args.fpath,
                                   args.itr if args.itr >=0 else 'last',
                                   args.deterministic)
     run_policy(env, get_action, args.len, args.episodes, not(args.norender))
