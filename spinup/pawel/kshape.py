@@ -154,7 +154,7 @@ def _extract_shape(idx, x, j, cur_center):
     return zscore(centroid, ddof=1)
 
 
-def _kshape(x, k):
+def _kshape(x, k, centroids=[]):
     """
     >>> from numpy.random import seed; seed(0)
     >>> _kshape(np.array([[1,2,3,4], [0,1,2,3], [-1,1,-1,1], [1,2,2,3]]), 2)
@@ -163,7 +163,8 @@ def _kshape(x, k):
     """
     m = x.shape[0]
     idx = randint(0, k, size=m)
-    centroids = np.zeros((k, x.shape[1]))
+    if len(centroids) == 0:
+        centroids = np.zeros((k, x.shape[1]))
     distances = np.empty((m, k))
 
     for _ in range(100):
@@ -180,7 +181,7 @@ def _kshape(x, k):
     return idx, centroids
 
 
-def kshape(x, k):
+def kshape(x, k, centroids=[]):
     idx, centroids = _kshape(np.array(x), k)
     clusters = []
     for i, centroid in enumerate(centroids):
