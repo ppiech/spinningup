@@ -5,6 +5,7 @@ from spinup.algos.sac.sac import sac
 from spinup.algos.td3.td3 import td3
 from spinup.algos.trpo.trpo import trpo
 from spinup.algos.vpg.vpg import vpg
+from spinup.algos.pawel.pawel import pawel
 
 # Loggers
 from spinup.utils.logx import Logger, EpochLogger
