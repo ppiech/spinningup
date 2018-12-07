@@ -16,8 +16,31 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10):
 
-    ppo(env_fn, actor_critic, ac_kwargs, seed, steps_per_epoch, epochs, gamma, clip_ratio, pi_lr,
+    def policy_env():
+        wrapper = EnvWrapper(env_fn())
+        return wrapper
+
+    ppo(policy_env, actor_critic, ac_kwargs, seed, steps_per_epoch, epochs, gamma, clip_ratio, pi_lr,
         vf_lr, train_pi_iters, train_v_iters, lam, max_ep_len, target_kl, logger_kwargs, save_freq)
+
+class EnvWrapper(gym.Env):
+    def __init__(self, env):
+        self.observation_space = env.observation_space
+        self.action_space = env.action_space
+        
+        self.env = env
+
+    def step(self, action):
+        return self.env.step(action)
+
+    def reset(self):
+        return self.env.reset()
+
+    def render(self, mode='human'):
+        return self.env.render(mode)
+
+    def close(self):
+        return self.env.close()
 
 if __name__ == '__main__':
     import argparse
