@@ -3,7 +3,6 @@ from spinup.pawel.kshape import kshape, zscore
 import matplotlib.pyplot as plt
 
 def stability_reward(obs):
-
     bonus = 0
     discount = 0.8
     windows = [1, 3, 5, 7, 13, 19]

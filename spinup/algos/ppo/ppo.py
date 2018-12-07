@@ -262,12 +262,12 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             buf.store(o, a, r, v_t, logp_t)
             logger.store(VVals=v_t)
 
-            o, _, d, _ = env.step(a[0])
+            o, r, d, _ = env.step(a[0])
 
             ep_obs[-1].append(o[0])
 
             #reward standing still:
-            r = stability_reward(np.array(ep_obs[-1]))
+            # r = stability_reward(np.array(ep_obs[-1]))
 
             ep_ret += r
             ep_len += 1

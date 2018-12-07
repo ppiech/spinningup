@@ -16,25 +16,44 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10):
 
+    episode_observations = []
+
+    def bonus(observation, reward):
+        episode_observations[-1].append(observation[0])
+        bonus = stability_reward(np.array(episode_observations[-1]))
+        return bonus
+
+    def on_reset(observation):
+        episode_observations.append([observation[0]])
+
     def policy_env():
-        wrapper = EnvWrapper(env_fn())
+        wrapper = EnvWrapper(env_fn(), bonus, on_reset)
         return wrapper
 
     ppo(policy_env, actor_critic, ac_kwargs, seed, steps_per_epoch, epochs, gamma, clip_ratio, pi_lr,
         vf_lr, train_pi_iters, train_v_iters, lam, max_ep_len, target_kl, logger_kwargs, save_freq)
 
 class EnvWrapper(gym.Env):
-    def __init__(self, env):
-        self.observation_space = env.observation_space
-        self.action_space = env.action_space
-        
+    def __init__(self, env, bonus_function, on_reset_function):
         self.env = env
+        self.observation_space = self.env.observation_space
+        self.action_space = self.env.action_space
+
+        self.bonus_function = bonus_function
+        self.on_reset_function = on_reset_function
+
+    def seed(self, seed=None):
+        self.env.seed(seed)
 
     def step(self, action):
-        return self.env.step(action)
+        observation, reward, done, info = self.env.step(action)
+        reward = self.bonus_function(observation, reward)
+        return observation, reward, done, info
 
     def reset(self):
-        return self.env.reset()
+        observation = self.env.reset()
+        self.on_reset_function(observation)
+        return observation
 
     def render(self, mode='human'):
         return self.env.render(mode)
