@@ -264,10 +264,7 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
             o, r, d, _ = env.step(a[0])
 
-            ep_obs[-1].append(o[0])
-
-            #reward standing still:
-            # r = stability_reward(np.array(ep_obs[-1]))
+            # ep_obs[-1].append(o[0])
 
             ep_ret += r
             ep_len += 1
@@ -284,7 +281,7 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                     logger.store(EpRet=ep_ret, EpLen=ep_len)
                 # pawel: only reset the environment at end of epoch
                 o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-                ep_obs.append([])
+                # ep_obs.append([])
 
         # pawel: only reset the environment at end of epoch
         # o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -296,8 +293,8 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         # Perform PPO update!
         update()
 
-        cluster_traces(ep_obs, epoch)
-        ep_obs = [[]]
+        # cluster_traces(ep_obs, epoch)
+        # ep_obs = [[]]
 
         # Log info about epoch
         logger.log_tabular('Epoch', epoch)

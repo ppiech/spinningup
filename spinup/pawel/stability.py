@@ -23,16 +23,7 @@ def stability_reward(obs):
     # bonus = len(obs)/(np.linalg.norm(obs))
     return bonus
 
-
-def cluster_traces(ep_obs, epoch_num):
-
-    for obs in ep_obs:
-        plt.plot(obs)
-    plt.savefig("/tmp/stability/%s-obs.png"%str(epoch_num))
-    plt.close()
-
-    window = 64
-
+def spans(ep_obs, window=64):
     spans = []
     for _obs in ep_obs:
         if len(_obs) == 0:
@@ -50,23 +41,12 @@ def cluster_traces(ep_obs, epoch_num):
                 mean = np.mean(obs[i:i+window])
             else:
                 i += 1
-
     spans = np.array(spans)
+    return spans
 
+def cluster_traces(spans):
     # num_spans = int(len(obs)/window)
     # spans = obs[-num_spans * window:].reshape(num_spans, window)
-    print(spans.shape)
     clusters = kshape(zscore(spans, axis=1), 4)
-    print (clusters)
 
-    colors = ['r','b','g','y']
-    for i in range(len(clusters)):
-        cluster = clusters[i]
-        color = colors[i]
-        # cluster_line = plt.plot(cluster[0])
-        # plt.setp(cluster_line, 'color', color, 'linewidth', 3.0)
-        for span_num in cluster[1]:
-            span_line = plt.plot(spans[span_num])
-            plt.setp(span_line, 'color', color, 'linewidth', 1.0)
-    plt.savefig("/tmp/stability/%s.png"%str(epoch_num))
-    plt.close()
+    return clusters
