@@ -182,15 +182,15 @@ def _kshape(x, k, centroids=[]):
 
 
 def kshape(x, k, centroids=[]):
-    idx, centroids = _kshape(np.array(x), k)
+    idx, centroids = _kshape(np.array(x), k, centroids)
     clusters = []
     for i, centroid in enumerate(centroids):
         series = []
         for j, val in enumerate(idx):
             if i == val:
                 series.append(j)
-        clusters.append((centroid, series))
-    return clusters
+        clusters.append(series)
+    return centroids, clusters
 
 if __name__ == "__main__":
     import sys

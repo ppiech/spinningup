@@ -12,7 +12,33 @@ from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_sc
 
 from spinup.pawel.stability import stability_reward, spans, cluster_traces
 
+class PawelBuffer:
+    def __init__(self):
+        self.step_num = 0
+        self.observations = []
+        self.spans = []
+        self.epoch_num = 0
+        self.centroids = []
 
+    def decay_observations(self, decay_rate):
+        observations_length = len(self.observations)
+        number_to_retain = int(observations_length * decay_rate)
+        for i in range(number_to_retain):
+            index_to_swap = random.randint(0, observations_length - 1)
+            swap = self.observations[i]
+            self.observations[i] = self.observations[index_to_swap]
+            self.observations[index_to_swap] = swap
+        self.observations = self.observations[0:number_to_retain]
+
+    def decay_spans(self, decay_rate):
+        spans_length = len(self.spans)
+        number_to_retain = int(spans_length * decay_rate)
+        for i in range(number_to_retain):
+            index_to_swap = random.randint(0, spans_length - 1)
+            swap = self.spans[i]
+            self.spans[i] = self.spans[index_to_swap]
+            self.spans[index_to_swap] = swap
+        self.spans = self.spans[0:number_to_retain]
 
 def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
@@ -27,57 +53,45 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             update()
             buffer.step_num = 0
             buffer.epoch_num += 1
-        buffer.episode_observations[-1].append(observation[0])
-        bonus = stability_reward(np.array(buffer.episode_observations[-1]))
+        buffer.observations[-1].append(observation[0])
+        bonus = stability_reward(np.array(buffer.observations[-1]))
         return observation, bonus
 
     def on_reset(observation):
-        buffer.episode_observations.append([observation[0]])
+        buffer.observations.append([observation[0]])
 
     def policy_env():
         wrapper = EnvWrapper(env_fn(), on_step, on_reset)
         return wrapper
 
     def update():
-        for obs in buffer.episode_observations:
+        for obs in buffer.observations:
             plt.plot(obs)
         plt.savefig("/tmp/stability/%s-obs.png"%str(buffer.epoch_num))
         plt.close()
-        episode_spans = spans(buffer.episode_observations)
-        clusters = cluster_traces(episode_spans)
-
+        episode_spans = spans(buffer.observations)
+        buffer.spans.extend(episode_spans)
+        centroids, clusters = cluster_traces(buffer.spans, 2, buffer.centroids)
+        print(centroids)
         colors = ['r','b','g','y']
         for i in range(len(clusters)):
             cluster = clusters[i]
             color = colors[i]
             # cluster_line = plt.plot(cluster[0])
             # plt.setp(cluster_line, 'color', color, 'linewidth', 3.0)
-            for span_num in cluster[1]:
-                span_line = plt.plot(episode_spans[span_num])
+            for span_num in cluster:
+                span_line = plt.plot(buffer.spans[span_num])
                 plt.setp(span_line, 'color', color, 'linewidth', 1.0)
         plt.savefig("/tmp/stability/%s.png"%str(buffer.epoch_num))
         plt.close()
 
-        buffer.decay_observations(0.5)
+        buffer.centroids = centroids
+        buffer.decay_spans(0.9)
+        buffer.observations = [[]]
+        # buffer.decay_observations(0.5)
 
     ppo(policy_env, actor_critic, ac_kwargs, seed, steps_per_epoch, epochs, gamma, clip_ratio, pi_lr,
         vf_lr, train_pi_iters, train_v_iters, lam, max_ep_len, target_kl, logger_kwargs, save_freq)
-
-class PawelBuffer:
-    def __init__(self):
-        self.step_num = 0
-        self.episode_observations = []
-        self.epoch_num = 0
-
-    def decay_observations(self, observations_decay_rate):
-        observations_length = len(self.episode_observations)
-        number_to_retain = int(observations_length * observations_decay_rate)
-        for i in range(number_to_retain):
-            index_to_swap = random.randint(0, observations_length - 1)
-            swap = self.episode_observations[i]
-            self.episode_observations[i] = self.episode_observations[index_to_swap]
-            self.episode_observations[index_to_swap] = swap
-        self.episode_observations = self.episode_observations[0:number_to_retain]
 
 class EnvWrapper(gym.Env):
     def __init__(self, env, on_step_function, on_reset_function):

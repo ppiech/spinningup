@@ -41,12 +41,12 @@ def spans(ep_obs, window=64):
                 mean = np.mean(obs[i:i+window])
             else:
                 i += 1
-    spans = np.array(spans)
+    #spans = np.array(spans)
     return spans
 
-def cluster_traces(spans):
+def cluster_traces(spans, num_clusters=2, centroids=[]):
     # num_spans = int(len(obs)/window)
     # spans = obs[-num_spans * window:].reshape(num_spans, window)
-    clusters = kshape(zscore(spans, axis=1), 4)
+    clusters = kshape(zscore(spans, axis=1), num_clusters, centroids)
 
     return clusters
