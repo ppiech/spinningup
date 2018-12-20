@@ -13,7 +13,7 @@ from spinup.utils.logx import EpochLogger
 from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
 
-from spinup.pawel.stability import stability_reward, spans, cluster_traces
+from spinup.pawel.stability import stability_reward, spans, cluster_traces, is_end_of_span
 
 DEFAULT_WINDOW_SIZE = 64
 DEFAULT_MEMORY_DECAY = 0.9
@@ -25,7 +25,6 @@ class PawelBuffer:
         self.observations = []
         self.spans = []
         self.epoch_num = 0
-        #self.centroids = []
 
     def decay_spans(self, decay_rate):
         spans_length = len(self.spans)
@@ -63,6 +62,10 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             buffer.step_num = 0
             buffer.epoch_num += 1
         buffer.observations[-1].append(observation[0])
+
+        if is_end_of_span(buffer.observations[-1]):
+            print("EndOfSpan")
+
         bonus = stability_reward(np.array(buffer.observations[-1]))
         return np.concatenate((observation, policy.current_goal_observation())), bonus
 
@@ -82,21 +85,27 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         episode_spans = spans(buffer.observations, window=DEFAULT_WINDOW_SIZE)
         buffer.spans.extend(episode_spans)
         policy.centroids, clusters = cluster_traces(buffer.spans, 2, policy.centroids)
-        print(policy.centroids)
-        colors = ['r','b','g','y']
+        plot_clusters(policy.centroids, clusters, buffer.epoch_num)
+        buffer.decay_spans(DEFAULT_MEMORY_DECAY)
+        buffer.observations = [[]]
+
+    def plot_clusters(centroids, clusters, epoch_num):
+        colors = ['C0','C1','C2','C3','C4','C5','C6','C7','C8','C9']
         for i in range(len(clusters)):
             cluster = clusters[i]
-            color = colors[i]
+            color = colors[i%10]
             # cluster_line = plt.plot(cluster[0])
             # plt.setp(cluster_line, 'color', color, 'linewidth', 3.0)
             for span_num in cluster:
                 span_line = plt.plot(buffer.spans[span_num])
                 plt.setp(span_line, 'color', color, 'linewidth', 1.0)
-        plt.savefig("/tmp/stability/%s.png"%str(buffer.epoch_num))
-        plt.close()
+        for i in range(len(centroids)):
+            span_line = plt.plot(centroids[i])
+            color = colors[(i+5)%10]
+            plt.setp(span_line, 'color', color, 'linewidth', 2.0)
 
-        buffer.decay_spans(DEFAULT_MEMORY_DECAY)
-        buffer.observations = [[]]
+        plt.savefig("/tmp/stability/%s.png"%str(epoch_num))
+        plt.close()
 
     ppo(policy_env, actor_critic, ac_kwargs, seed, steps_per_epoch, epochs, gamma, clip_ratio, pi_lr,
         vf_lr, train_pi_iters, train_v_iters, lam, max_ep_len, target_kl, logger_kwargs, save_freq)
@@ -109,11 +118,7 @@ class EnvWrapper(gym.Env):
         shape = ((observation_space.shape[0] + num_goal_observations))
         observation_space = spaces.Box(
             low=np.concatenate((observation_space.low, np.zeros([num_goal_observations], dtype=int))),
-            high=np.concatenate((observation_space.high, np.ones([num_goal_observations], dtype=int)))
-            )
-            # low=observation_space.low,
-            # high=observation_space.high,
-            # shape=observation_space.shape)
+            high=np.concatenate((observation_space.high, np.ones([num_goal_observations], dtype=int))))
 
         self.observation_space = observation_space
         self.action_space = self.env.action_space

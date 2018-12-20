@@ -44,6 +44,13 @@ def spans(ep_obs, window=64):
     #spans = np.array(spans)
     return spans
 
+def is_end_of_span(ep_obs, window=64):
+    if len(ep_obs) <= window:
+        return False
+
+    mean = np.mean(ep_obs[-window:])
+    return ep_obs[-window-1] < mean and ep_obs[-window] > mean
+
 def cluster_traces(spans, num_clusters=2, centroids=[]):
     # num_spans = int(len(obs)/window)
     # spans = obs[-num_spans * window:].reshape(num_spans, window)
