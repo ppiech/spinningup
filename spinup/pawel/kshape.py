@@ -192,6 +192,10 @@ def kshape(x, k, centroids=[]):
         clusters.append(series)
     return centroids, clusters
 
+def distance(x, centroid):
+    distance, _ = _sbd(x, centroid)
+    return distance
+
 if __name__ == "__main__":
     import sys
     import doctest
