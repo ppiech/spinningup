@@ -14,6 +14,7 @@ from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
 
 from spinup.pawel.stability import stability_reward, spans, cluster_traces, is_end_of_span
+from spinup.pawel.kshape import distance
 
 DEFAULT_WINDOW_SIZE = 64
 DEFAULT_MEMORY_DECAY = 0.9
@@ -38,6 +39,7 @@ class PawelBuffer:
 
 class PawelPolicy:
     def __init__(self, num_goals = DEFAULT_NUMBER_OF_GOALS, window_size = DEFAULT_WINDOW_SIZE):
+        self.window_size = window_size
         self.num_goals = num_goals
         self.goal_observations = np.identity(num_goals)
         self.centroids = np.zeros((num_goals, window_size))
@@ -46,6 +48,9 @@ class PawelPolicy:
 
     def current_goal_observation(self):
         return self.goal_observations[self.current_goal]
+
+    def current_centroid(self):
+        return self.centroids[self.current_goal]
 
 def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
@@ -64,7 +69,9 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         buffer.observations[-1].append(observation[0])
 
         if is_end_of_span(buffer.observations[-1]):
-            print("EndOfSpan")
+            span = buffer.observations[-1][-policy.window_size:]
+            distance_to_centroid = distance(span, policy.current_centroid())
+            print(distance_to_centroid)
 
         bonus = stability_reward(np.array(buffer.observations[-1]))
         return np.concatenate((observation, policy.current_goal_observation())), bonus
