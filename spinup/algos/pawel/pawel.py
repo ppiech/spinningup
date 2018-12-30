@@ -26,6 +26,7 @@ class PawelBuffer:
         self.observations = []
         self.spans = []
         self.epoch_num = 0
+        self.end_of_span_reward = 0
 
     def decay_spans(self, decay_rate):
         spans_length = len(self.spans)
@@ -68,12 +69,8 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             buffer.epoch_num += 1
         buffer.observations[-1].append(observation[0])
 
-        if is_end_of_span(buffer.observations[-1]):
-            span = buffer.observations[-1][-policy.window_size:]
-            distance_to_centroid = distance(span, policy.current_centroid())
-            print(distance_to_centroid)
-
-        bonus = stability_reward(np.array(buffer.observations[-1]))
+        # bonus = stability_reward(np.array(buffer.observations[-1])) + end_of_span_reward(buffer.observations[-1])
+        bonus = end_of_span_reward(buffer.observations[-1])
         return np.concatenate((observation, policy.current_goal_observation())), bonus
 
     def on_reset(observation):
@@ -97,10 +94,10 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         buffer.observations = [[]]
 
     def plot_clusters(centroids, clusters, epoch_num):
-        colors = ['C0','C1','C2','C3','C4','C5','C6','C7','C8','C9']
+        colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
         for i in range(len(clusters)):
             cluster = clusters[i]
-            color = colors[i%10]
+            color = colors[i%(len(colors))]
             # cluster_line = plt.plot(cluster[0])
             # plt.setp(cluster_line, 'color', color, 'linewidth', 3.0)
             for span_num in cluster:
@@ -108,11 +105,20 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
                 plt.setp(span_line, 'color', color, 'linewidth', 1.0)
         for i in range(len(centroids)):
             span_line = plt.plot(centroids[i])
-            color = colors[(i+5)%10]
+            color = colors[i%(len(colors))]
             plt.setp(span_line, 'color', color, 'linewidth', 2.0)
 
         plt.savefig("/tmp/stability/%s.png"%str(epoch_num))
         plt.close()
+
+    def end_of_span_reward(observations):
+        if is_end_of_span(observations):
+            span = observations[-policy.window_size:]
+            distance_to_centroid = distance(span, policy.current_centroid())
+            r =  1/(distance_to_centroid + 0.000001) - 1
+            return r
+        else:
+            return 0
 
     ppo(policy_env, actor_critic, ac_kwargs, seed, steps_per_epoch, epochs, gamma, clip_ratio, pi_lr,
         vf_lr, train_pi_iters, train_v_iters, lam, max_ep_len, target_kl, logger_kwargs, save_freq)
