@@ -26,7 +26,6 @@ class PawelBuffer:
         self.observations = []
         self.spans = []
         self.epoch_num = 0
-        self.end_of_span_reward = 0
 
     def decay_spans(self, decay_rate):
         spans_length = len(self.spans)
@@ -58,6 +57,9 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10):
 
+    logger = EpochLogger(**logger_kwargs)
+    logger.save_config(locals())
+
     buffer = PawelBuffer()
     policy = PawelPolicy()
 
@@ -69,8 +71,13 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             buffer.epoch_num += 1
         buffer.observations[-1].append(observation[0])
 
-        # bonus = stability_reward(np.array(buffer.observations[-1])) + end_of_span_reward(buffer.observations[-1])
-        bonus = end_of_span_reward(buffer.observations[-1])
+        stability_bonus = stability_reward(np.array(buffer.observations[-1]))
+        logger.store(StabilityReward=stability_bonus)
+        end_of_span_bonus = end_of_span_reward(buffer.observations[-1])
+        logger.store(EndOfSpanReward=end_of_span_bonus)
+
+        bonus = stability_bonus + end_of_span_bonus
+        #bonus = end_of_span_reward(buffer.observations[-1])
         return np.concatenate((observation, policy.current_goal_observation())), bonus
 
     def on_reset(observation):
@@ -86,12 +93,19 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
             plt.plot(obs)
         plt.savefig("/tmp/stability/%s-obs.png"%str(buffer.epoch_num))
         plt.close()
+
         episode_spans = spans(buffer.observations, window=DEFAULT_WINDOW_SIZE)
         buffer.spans.extend(episode_spans)
         policy.centroids, clusters = cluster_traces(buffer.spans, 2, policy.centroids)
         plot_clusters(policy.centroids, clusters, buffer.epoch_num)
         buffer.decay_spans(DEFAULT_MEMORY_DECAY)
         buffer.observations = [[]]
+
+        logger.log_tabular('CentroidDistance', with_min_and_max=True)
+        logger.log_tabular('StabilityReward', average_only=True)
+        logger.log_tabular('EndOfSpanReward', average_only=True)
+
+        logger.dump_tabular()
 
     def plot_clusters(centroids, clusters, epoch_num):
         colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
@@ -115,7 +129,8 @@ def pawel(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         if is_end_of_span(observations):
             span = observations[-policy.window_size:]
             distance_to_centroid = distance(span, policy.current_centroid())
-            r =  1/(distance_to_centroid + 0.000001) - 1
+            logger.store(CentroidDistance=distance_to_centroid)
+            r =  100/(distance_to_centroid + 0.000001) - 1
             return r
         else:
             return 0
