@@ -16,7 +16,7 @@ The following algorithms are implemented in the Spinning Up package:
 - `Twin Delayed DDPG`_ (TD3)
 - `Soft Actor-Critic`_ (SAC)
 
-They are all implemented with MLP (non-recurrent) actor-critics, making them suitable for fully-observed, non-image-based RL environments, eg the `Gym Mujoco`_ environments.
+They are all implemented with `MLP`_ (non-recurrent) actor-critics, making them suitable for fully-observed, non-image-based RL environments, e.g. the `Gym Mujoco`_ environments.
 
 .. _`Gym Mujoco`: https://gym.openai.com/envs/#mujoco
 .. _`Vanilla Policy Gradient`: ../algorithms/vpg.html
@@ -25,12 +25,13 @@ They are all implemented with MLP (non-recurrent) actor-critics, making them sui
 .. _`Deep Deterministic Policy Gradient`: ../algorithms/ddpg.html
 .. _`Twin Delayed DDPG`: ../algorithms/td3.html
 .. _`Soft Actor-Critic`: ../algorithms/sac.html
+.. _`MLP`: https://en.wikipedia.org/wiki/Multilayer_perceptron
 
 
 Why These Algorithms?
 =====================
 
-We chose the core deep RL algorithms in this package to reflect useful progressions of ideas from the recent history of the field, culminating in two algorithms in particular---PPO and SAC---which are close to SOTA on reliability and sample efficiency among policy-learning algorithms. They also expose some of the trade-offs that get made in designing and using algorithms in deep RL.
+We chose the core deep RL algorithms in this package to reflect useful progressions of ideas from the recent history of the field, culminating in two algorithms in particular---PPO and SAC---which are close to state of the art on reliability and sample efficiency among policy-learning algorithms. They also expose some of the trade-offs that get made in designing and using algorithms in deep RL.
 
 The On-Policy Algorithms
 ------------------------
@@ -82,7 +83,7 @@ Next, there is a single function which runs the algorithm, performing the follow
     
     10) Setting up model saving through the logger
     
-    11) Defining functions needed for running the main loop of the algorithm (eg the core update function, get action function, and test agent function, depending on the algorithm)
+    11) Defining functions needed for running the main loop of the algorithm (e.g. the core update function, get action function, and test agent function, depending on the algorithm)
     
     12) Running the main loop of the algorithm:
     

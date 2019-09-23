@@ -6,4 +6,5 @@ data/
 .python-version
 .idea/
 .vscode/
-env/
+.DS_Store
+_build/

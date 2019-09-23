@@ -18,7 +18,7 @@ setup(
         'gym[atari,box2d,classic_control]>=0.10.8',
         'ipython',
         'joblib',
-        'matplotlib',
+        'matplotlib==3.0.2',
         'mpi4py',
         'numpy',
         'pandas',
@@ -26,9 +26,10 @@ setup(
         'psutil',
         'scipy',
         'seaborn==0.8.1',
-        'tensorflow>=1.8.0',
+        'tensorflow>=1.8.0,<2.0',
         'tqdm'
     ],
+    extras_require={'mujoco': 'mujoco-py<2.1,>=2.0'},
     description="Teaching tools for introducing people to deep RL.",
     author="Joshua Achiam",
 )

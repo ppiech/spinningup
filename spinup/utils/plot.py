@@ -39,7 +39,7 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
     Changes the colorscheme and the default legend style, though.
     """
-    plt.legend(loc='best').draggable()
+    plt.legend(loc='best').set_draggable(True)
 
     """
     For the version of the legend used in the Spinning Up benchmarking page, 
@@ -84,7 +84,11 @@ def get_datasets(logdir, condition=None):
             unit = units[condition1]
             units[condition1] += 1
 
-            exp_data = pd.read_table(os.path.join(root,'progress.txt'))
+            try:
+                exp_data = pd.read_table(os.path.join(root,'progress.txt'))
+            except:
+                print('Could not read from %s'%os.path.join(root,'progress.txt'))
+                continue
             performance = 'AverageTestEpRet' if 'AverageTestEpRet' in exp_data else 'AverageEpRet'
             exp_data.insert(len(exp_data.columns),'Unit',unit)
             exp_data.insert(len(exp_data.columns),'Condition1',condition1)
@@ -105,12 +109,12 @@ def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None):
     """
     logdirs = []
     for logdir in all_logdirs:
-        if osp.isdir(logdir) and logdir[-1]=='/':
+        if osp.isdir(logdir) and logdir[-1]==os.sep:
             logdirs += [logdir]
         else:
             basedir = osp.dirname(logdir)
             fulldir = lambda x : osp.join(basedir, x)
-            prefix = logdir.split('/')[-1]
+            prefix = logdir.split(os.sep)[-1]
             listdir= os.listdir(basedir)
             logdirs += sorted([fulldir(x) for x in listdir if prefix in x])
 
