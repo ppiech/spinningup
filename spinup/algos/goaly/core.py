@@ -11,10 +11,17 @@ def combined_shape(length, shape=None):
     return (length, shape) if np.isscalar(shape) else (length, *shape)
 
 def placeholder(dim=None):
-    return tf.placeholder(dtype=tf.float32, shape=combined_shape(None,dim))
+    return tf.placeholder(dtype=tf.float32, shape=combined_shape(None, dim))
 
 def placeholders(*args):
     return [placeholder(dim) for dim in args]
+
+def placeholders_goals(dim, env):
+    if isinstance(env.observation_space, Box):
+        return placeholder(dim)
+    elif isinstance(env.observation_space, Discrete):
+        return tf.placeholder(dtype=tf.int32, shape=(None, ))
+    raise NotImplementedError
 
 def placeholder_from_space(space):
     if isinstance(space, Box):
@@ -64,9 +71,9 @@ def discount_cumsum(x, discount):
 Policies
 """
 
-def mlp_categorical_policy(x, a, hidden_sizes, activation, output_activation, action_space):
+def mlp_categorical_policy(x, goals, a, hidden_sizes, activation, output_activation, action_space):
     act_dim = action_space.n
-    logits = mlp(x, list(hidden_sizes)+[act_dim], activation, None)
+    logits = mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[act_dim], activation, None)
     logp_all = tf.nn.log_softmax(logits)
     pi = tf.squeeze(tf.multinomial(logits,1), axis=1)
     logp = tf.reduce_sum(tf.one_hot(a, depth=act_dim) * logp_all, axis=1)
@@ -74,9 +81,9 @@ def mlp_categorical_policy(x, a, hidden_sizes, activation, output_activation, ac
     return pi, logp, logp_pi
 
 
-def mlp_gaussian_policy(x, a, hidden_sizes, activation, output_activation, action_space):
+def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation, action_space):
     act_dim = a.shape.as_list()[-1]
-    mu = mlp(x, list(hidden_sizes)+[act_dim], activation, output_activation)
+    mu = mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[act_dim], activation, output_activation)
     log_std = tf.get_variable(name='log_std', initializer=-0.5*np.ones(act_dim, dtype=np.float32))
     std = tf.exp(log_std)
     pi = mu + tf.random_normal(tf.shape(mu)) * std
@@ -88,7 +95,7 @@ def mlp_gaussian_policy(x, a, hidden_sizes, activation, output_activation, actio
 """
 Actor-Critics
 """
-def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
+def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
                      output_activation=None, policy=None, action_space=None):
 
     # default policy builder depends on action space
@@ -98,7 +105,7 @@ def mlp_actor_critic(x, a, hidden_sizes=(64,64), activation=tf.tanh,
         policy = mlp_categorical_policy
 
     with tf.variable_scope('pi'):
-        pi, logp, logp_pi = policy(x, a, hidden_sizes, activation, output_activation, action_space)
+        pi, logp, logp_pi = policy(x, goals, a, hidden_sizes, activation, output_activation, action_space)
     with tf.variable_scope('v'):
         v = tf.squeeze(mlp(x, list(hidden_sizes)+[1], activation, None), axis=1)
     return pi, logp, logp_pi, v
