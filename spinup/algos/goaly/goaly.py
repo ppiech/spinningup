@@ -7,8 +7,6 @@ from spinup.utils.logx import EpochLogger
 from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
 
-from spinup.pawel.stability import stability_reward, cluster_traces
-
 class GoalyBuffer:
     """
     A buffer for storing trajectories experienced by a PPO agent interacting
@@ -94,7 +92,7 @@ with early stopping based on approximate KL
 """
 def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
-        vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
+        vf_lr=1e-3, inverse_lr=1e-3, train_pi_iters=80, train_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10):
     """
 
@@ -210,6 +208,17 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
     v_loss = tf.reduce_mean((ret_ph - v)**2)
 
+    # Inverse Dynamics Objectives
+    inverse_input_size = tf.shape(x_ph)[0]
+    x_inverse_prev = tf.slice(x_ph, [0, 0], [inverse_input_size - 1, x_ph.shape.as_list()[-1]])
+    x_inverse = tf.slice(x_ph, [1, 0], [inverse_input_size - 1, x_ph.shape.as_list()[-1]])
+    #TODO: need to figure out how to deal with different shapes of action space
+    #TODO: a_inverse = tf.slice(a_ph, [0, 0], [inverse_input_size - 1, tf.shape(a_ph)[-1]])
+    a_inverse = tf.slice(a_ph, [0], [inverse_input_size - 1])
+    goals_inverse = tf.slice(goals_ph, [0, 0], [inverse_input_size - 1, num_goals])
+    a_predicted, goals_predicted = core.inverse_model(x_inverse_prev, x_inverse, env.action_space, num_goals)
+    inverse_loss = tf.reduce_mean((tf.cast(a_inverse, tf.float32) - a_predicted)**2)
+
     # Info (useful to watch during learning)
     approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
     approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
@@ -219,6 +228,7 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     # Optimizers
     train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(pi_loss)
     train_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(v_loss)
+    train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -231,7 +241,8 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
 
     def update():
         inputs = {k:v for k,v in zip(all_phs, buf.get())}
-        pi_l_old, v_l_old, ent = sess.run([pi_loss, v_loss, approx_ent], feed_dict=inputs)
+        pi_l_old, v_l_old, inverse_loss_old, ent = sess.run(
+            [pi_loss, v_loss, inverse_loss, approx_ent], feed_dict=inputs)
 
         # Training
         for i in range(train_pi_iters):
@@ -244,12 +255,17 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
         for _ in range(train_v_iters):
             sess.run(train_v, feed_dict=inputs)
 
+        for _ in range(train_inverse_iters):
+            sess.run(train_inverse, feed_dict=inputs)
+
         # Log changes from update
-        pi_l_new, v_l_new, kl, cf = sess.run([pi_loss, v_loss, approx_kl, clipfrac], feed_dict=inputs)
-        logger.store(LossPi=pi_l_old, LossV=v_l_old,
+        pi_l_new, v_l_new, inverse_loss_new, kl, cf = sess.run(
+            [pi_loss, v_loss, inverse_loss, approx_kl, clipfrac], feed_dict=inputs)
+        logger.store(LossPi=pi_l_old, LossV=v_l_old, LossInverse=inverse_loss_old,
                      KL=kl, Entropy=ent, ClipFrac=cf,
                      DeltaLossPi=(pi_l_new - pi_l_old),
-                     DeltaLossV=(v_l_new - v_l_old))
+                     DeltaLossV=(v_l_new - v_l_old),
+                     DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
 
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -301,8 +317,10 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossPi', average_only=True)
         logger.log_tabular('LossV', average_only=True)
+        logger.log_tabular('LossInverse', average_only=True)
         logger.log_tabular('DeltaLossPi', average_only=True)
         logger.log_tabular('DeltaLossV', average_only=True)
+        logger.log_tabular('DeltaLossInverse', average_only=True)
         logger.log_tabular('Entropy', average_only=True)
         logger.log_tabular('KL', average_only=True)
         logger.log_tabular('ClipFrac', average_only=True)

@@ -80,7 +80,6 @@ def mlp_categorical_policy(x, goals, a, hidden_sizes, activation, output_activat
     logp_pi = tf.reduce_sum(tf.one_hot(pi, depth=act_dim) * logp_all, axis=1)
     return pi, logp, logp_pi
 
-
 def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation, action_space):
     act_dim = a.shape.as_list()[-1]
     mu = mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[act_dim], activation, output_activation)
@@ -90,7 +89,6 @@ def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation
     logp = gaussian_likelihood(a, mu, log_std)
     logp_pi = gaussian_likelihood(pi, mu, log_std)
     return pi, logp, logp_pi
-
 
 """
 Actor-Critics
@@ -109,3 +107,18 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
     with tf.variable_scope('v'):
         v = tf.squeeze(mlp(x, list(hidden_sizes)+[1], activation, None), axis=1)
     return pi, logp, logp_pi, v
+
+"""
+Inverse Dynamics
+"""
+def inverse_model(x_prev, x, action_space, num_goals, hidden_sizes=(32,32), activation=tf.tanh, output_activation=None):
+    if action_space.shape:
+        act_dim = action_space.shape
+    else:
+        act_dim = 1
+    logits = mlp(tf.concat([x_prev, x], 1), list(hidden_sizes)+[act_dim], activation, None)
+
+    inverse_input_size = tf.shape(x)[0]
+    action_logits = tf.slice(logits, [0, 0], [inverse_input_size, act_dim])
+    goals_logits = tf.slice(logits, [0, act_dim], [inverse_input_size, num_goals])
+    return action_logits, goals_logits
