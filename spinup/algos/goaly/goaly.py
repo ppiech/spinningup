@@ -6,6 +6,7 @@ import spinup.algos.goaly.core as core
 from spinup.utils.logx import EpochLogger
 from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
+from gym.spaces import Box, Discrete
 
 class GoalyBuffer:
     """
@@ -208,21 +209,9 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
     v_loss = tf.reduce_mean((ret_ph - v)**2)
 
-    # Inverse Dynamics Objectives
-    inverse_input_size = tf.shape(x_ph)[0]
-    x_inverse_prev = tf.slice(x_ph, [0, 0], [inverse_input_size - 1, x_ph.shape.as_list()[-1]])
-    x_inverse = tf.slice(x_ph, [1, 0], [inverse_input_size - 1, x_ph.shape.as_list()[-1]])
-    #TODO: need to figure out how to deal with different shapes of action space
-    #TODO: a_inverse = tf.slice(a_ph, [0, 0], [inverse_input_size - 1, tf.shape(a_ph)[-1]])
-    if env.action_space.shape:
-        print(a_ph)
-        print(act_dim)
-        a_inverse = tf.slice(a_ph, [0, 0], [inverse_input_size - 1, act_dim[0]])
-    else:
-        a_inverse = tf.slice(a_ph, [0], [inverse_input_size - 1])
-    goals_inverse = tf.slice(goals_ph, [0, 0], [inverse_input_size - 1, num_goals])
-    a_predicted, goals_predicted = core.inverse_model(x_inverse_prev, x_inverse, env.action_space, num_goals)
-    inverse_loss = tf.reduce_mean( tf.abs(tf.cast(a_inverse, tf.float32) - a_predicted) )
+    # Inverse Dynamics Model
+    a_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
+    inverse_loss = tf.reduce_mean( (tf.cast(a_inverse, tf.float32) - a_predicted)**2 )
 
     # Info (useful to watch during learning)
     approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
@@ -271,8 +260,6 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
                      DeltaLossPi=(pi_l_new - pi_l_old),
                      DeltaLossV=(v_l_new - v_l_old),
                      DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
-
-        print(a_predicted_val)
 
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0

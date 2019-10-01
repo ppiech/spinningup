@@ -115,14 +115,37 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(x_prev, x, action_space, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, output_activation=tf.sigmoid):
-    if action_space.shape:
-        act_dim = action_space.shape[0]
-    else:
-        act_dim = 1
-    logits = mlp(tf.concat([x_prev, x], 1), list(hidden_sizes)+[act_dim], activation, output_activation)
+def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu):
 
     inverse_input_size = tf.shape(x)[0]
-    action_logits = tf.slice(logits, [0, 0], [inverse_input_size, act_dim])
-    goals_logits = tf.slice(logits, [0, act_dim], [inverse_input_size, num_goals])
-    return action_logits, goals_logits
+    features_shape = x.shape.as_list()[1:]
+    x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
+    x = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
+
+    if isinstance(env.action_space, Discrete):
+        # Trim the last action from input set
+        a_inverse = tf.slice(a, [0], [inverse_input_size - 1])
+
+        # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
+        # picking a value between two actions (like .5)
+        a_inverse = tf.one_hot(tf.cast(a_inverse, tf.int32), 2)
+        a_inverse_dim = np.prod(a_inverse.get_shape().as_list()[1:])
+        a_inverse = tf.reshape(a_inverse, [-1, a_inverse_dim])
+
+        output_activation=tf.sigmoid
+    else:
+        # Trim the last action from input set
+        a_inverse = tf.slice(a, [0, 0], [inverse_input_size - 1] + list(env.action_space.shape))
+        output_activation=None
+
+    num_goals = goals.get_shape().as_list()[-1]
+    goals_inverse = tf.slice(goals, [0, 0], [inverse_input_size - 1, num_goals])
+
+    num_actions = a_inverse.get_shape().as_list()[-1]
+
+    logits = mlp(tf.concat([x_prev, x], 1), list(hidden_sizes)+[num_actions + num_goals], activation, output_activation)
+
+    inverse_input_size = tf.shape(x)[0]
+    action_logits = tf.slice(logits, [0, 0], [inverse_input_size, num_actions])
+    goals_logits = tf.slice(logits, [0, num_actions], [inverse_input_size, num_goals])
+    return a_inverse, action_logits, goals_logits
