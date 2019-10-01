@@ -92,7 +92,7 @@ with early stopping based on approximate KL
 """
 def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
-        vf_lr=1e-3, inverse_lr=1e-3, train_pi_iters=80, train_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
+        vf_lr=1e-3, inverse_lr=1e-2, train_pi_iters=80, train_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10):
     """
 
@@ -214,10 +214,15 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     x_inverse = tf.slice(x_ph, [1, 0], [inverse_input_size - 1, x_ph.shape.as_list()[-1]])
     #TODO: need to figure out how to deal with different shapes of action space
     #TODO: a_inverse = tf.slice(a_ph, [0, 0], [inverse_input_size - 1, tf.shape(a_ph)[-1]])
-    a_inverse = tf.slice(a_ph, [0], [inverse_input_size - 1])
+    if env.action_space.shape:
+        print(a_ph)
+        print(act_dim)
+        a_inverse = tf.slice(a_ph, [0, 0], [inverse_input_size - 1, act_dim[0]])
+    else:
+        a_inverse = tf.slice(a_ph, [0], [inverse_input_size - 1])
     goals_inverse = tf.slice(goals_ph, [0, 0], [inverse_input_size - 1, num_goals])
     a_predicted, goals_predicted = core.inverse_model(x_inverse_prev, x_inverse, env.action_space, num_goals)
-    inverse_loss = tf.reduce_mean((tf.cast(a_inverse, tf.float32) - a_predicted)**2)
+    inverse_loss = tf.reduce_mean( tf.abs(tf.cast(a_inverse, tf.float32) - a_predicted) )
 
     # Info (useful to watch during learning)
     approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
@@ -259,13 +264,15 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
             sess.run(train_inverse, feed_dict=inputs)
 
         # Log changes from update
-        pi_l_new, v_l_new, inverse_loss_new, kl, cf = sess.run(
-            [pi_loss, v_loss, inverse_loss, approx_kl, clipfrac], feed_dict=inputs)
+        pi_l_new, v_l_new, inverse_loss_new, kl, cf, a_predicted_val = sess.run(
+            [pi_loss, v_loss, inverse_loss, approx_kl, clipfrac, a_predicted], feed_dict=inputs)
         logger.store(LossPi=pi_l_old, LossV=v_l_old, LossInverse=inverse_loss_old,
                      KL=kl, Entropy=ent, ClipFrac=cf,
                      DeltaLossPi=(pi_l_new - pi_l_old),
                      DeltaLossV=(v_l_new - v_l_old),
                      DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
+
+        print(a_predicted_val)
 
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -279,6 +286,12 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
             a, v_t, logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1), goals_ph: goals.reshape(1, -1)})
+
+            # Debug: make the action function really simple
+            # if o[0] < 0:
+            #     a = np.array([0])
+            # else:
+            #     a = np.array([1])
 
             # save and log
             buf.store(o, goals, a, r, v_t, logp_t)

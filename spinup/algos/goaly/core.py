@@ -111,12 +111,16 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
 """
 Inverse Dynamics
 """
-def inverse_model(x_prev, x, action_space, num_goals, hidden_sizes=(32,32), activation=tf.tanh, output_activation=None):
+
+def action_activation(x):
+    return tf.round(x)
+
+def inverse_model(x_prev, x, action_space, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, output_activation=tf.sigmoid):
     if action_space.shape:
-        act_dim = action_space.shape
+        act_dim = action_space.shape[0]
     else:
         act_dim = 1
-    logits = mlp(tf.concat([x_prev, x], 1), list(hidden_sizes)+[act_dim], activation, None)
+    logits = mlp(tf.concat([x_prev, x], 1), list(hidden_sizes)+[act_dim], activation, output_activation)
 
     inverse_input_size = tf.shape(x)[0]
     action_logits = tf.slice(logits, [0, 0], [inverse_input_size, act_dim])
