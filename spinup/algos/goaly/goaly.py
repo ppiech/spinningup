@@ -210,8 +210,10 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     v_loss = tf.reduce_mean((ret_ph - v)**2)
 
     # Inverse Dynamics Model
-    a_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
-    inverse_loss = tf.reduce_mean( (tf.cast(a_inverse, tf.float32) - a_predicted)**2 )
+    a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
+    inverse_action_loss = tf.reduce_mean( (tf.cast(a_inverse, tf.float32) - a_predicted)**2 )
+    inverse_goal_loss = tf.reduce_mean((goals_inverse - goals_predicted)**2)
+    inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Info (useful to watch during learning)
     approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute

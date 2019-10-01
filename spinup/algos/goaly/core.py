@@ -120,7 +120,7 @@ def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu)
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
     x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
-    x = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
+    x_inverse = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
 
     if isinstance(env.action_space, Discrete):
         # Trim the last action from input set
@@ -143,9 +143,9 @@ def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu)
 
     num_actions = a_inverse.get_shape().as_list()[-1]
 
-    logits = mlp(tf.concat([x_prev, x], 1), list(hidden_sizes)+[num_actions + num_goals], activation, output_activation)
+    logits = mlp(tf.concat([x_prev, x_inverse], 1), list(hidden_sizes)+[num_actions + num_goals], activation, output_activation)
 
-    inverse_input_size = tf.shape(x)[0]
+    inverse_input_size = tf.shape(x_inverse)[0]
     action_logits = tf.slice(logits, [0, 0], [inverse_input_size, num_actions])
     goals_logits = tf.slice(logits, [0, num_actions], [inverse_input_size, num_goals])
-    return a_inverse, action_logits, goals_logits
+    return a_inverse, goals_inverse, action_logits, goals_logits
