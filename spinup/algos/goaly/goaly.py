@@ -94,7 +94,7 @@ with early stopping based on approximate KL
 def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
         vf_lr=1e-3, inverse_lr=1e-2, train_pi_iters=80, train_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
-        target_kl=0.01, logger_kwargs=dict(), save_freq=10):
+        target_kl=0.01, logger_kwargs=dict(), save_freq=10, goal_error_base=0.1):
     """
 
     Args:
@@ -211,8 +211,10 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
 
     # Inverse Dynamics Model
     a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
-    inverse_action_loss = tf.reduce_mean( (tf.cast(a_inverse, tf.float32) - a_predicted)**2 )
-    inverse_goal_loss = tf.reduce_mean((goals_inverse - goals_predicted)**2)
+
+    inverse_action_error = (tf.cast(a_inverse, tf.float32) - a_predicted)**2
+    inverse_action_loss = tf.reduce_mean(inverse_action_error)
+    inverse_goal_loss = tf.reduce_mean(((goals_inverse - goals_predicted)**2) * (inverse_action_error + goal_error_base))
     inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Info (useful to watch during learning)
