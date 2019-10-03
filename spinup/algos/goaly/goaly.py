@@ -23,11 +23,11 @@ class GoalyBuffer:
         self.rew_buf = np.zeros(size, dtype=np.float32)
         self.ret_buf = np.zeros(size, dtype=np.float32)
         self.val_buf = np.zeros(size, dtype=np.float32)
-        self.logp_buf = np.zeros(size, dtype=np.float32)
+        self.actions_logp_buf = np.zeros(size, dtype=np.float32)
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, goals, act, rew, val, logp):
+    def store(self, obs, goals, act, rew, val, actions_logp):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
@@ -37,7 +37,7 @@ class GoalyBuffer:
         self.act_buf[self.ptr] = act
         self.rew_buf[self.ptr] = rew
         self.val_buf[self.ptr] = val
-        self.logp_buf[self.ptr] = logp
+        self.actions_logp_buf[self.ptr] = actions_logp
         self.ptr += 1
 
     def finish_path(self, last_val=0):
@@ -81,7 +81,7 @@ class GoalyBuffer:
         adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         return [self.obs_buf, self.goals_buf, self.act_buf, self.adv_buf,
-                self.ret_buf, self.logp_buf]
+                self.ret_buf, self.actions_logp_buf]
 
 
 """
@@ -92,8 +92,8 @@ with early stopping based on approximate KL
 
 """
 def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
-        steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
-        vf_lr=1e-3, inverse_lr=1e-2, train_pi_iters=80, train_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
+        steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, action_pi_lr=3e-4,
+        action_vf_lr=1e-3, inverse_lr=1e-2, train_action_pi_iters=80, train_action_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10, goal_error_base=0.1):
     """
 
@@ -140,15 +140,15 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
             can still go farther than the clip_ratio says, but it doesn't help
             on the objective anymore. (Usually small, 0.1 to 0.3.)
 
-        pi_lr (float): Learning rate for policy optimizer.
+        action_pi_lr (float): Learning rate for policy optimizer.
 
-        vf_lr (float): Learning rate for value function optimizer.
+        action_vf_lr (float): Learning rate for value function optimizer.
 
-        train_pi_iters (int): Maximum number of gradient descent steps to take
+        train_action_pi_iters (int): Maximum number of gradient descent steps to take
             on policy loss per epoch. (Early stopping may cause optimizer
             to take fewer than this.)
 
-        train_v_iters (int): Number of gradient descent steps to take on
+        train_action_v_iters (int): Number of gradient descent steps to take on
             value function per epoch.
 
         lam (float): Lambda for GAE-Lambda. (Always between 0 and 1,
@@ -183,31 +183,31 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
 
     # Inputs to computation graph
     x_ph, a_ph = core.placeholders_from_spaces(env.observation_space, env.action_space)
-    adv_ph, ret_ph, logp_old_ph = core.placeholders(None, None, None)
+    adv_ph, ret_ph, actions_logp_old_ph = core.placeholders(None, None, None)
     goals_ph = core.placeholders_goals(num_goals, env)
 
     # Main outputs from computation graph
-    pi, logp, logp_pi, v = actor_critic(x_ph, goals_ph, a_ph, **ac_kwargs)
+    actions_pi, actions_logp, actions_logp_pi, actions_v = actor_critic(x_ph, goals_ph, a_ph, **ac_kwargs)
 
     # Need all placeholders in *this* order later (to zip with data from buffer)
-    all_phs = [x_ph, goals_ph, a_ph, adv_ph, ret_ph, logp_old_ph]
+    all_phs = [x_ph, goals_ph, a_ph, adv_ph, ret_ph, actions_logp_old_ph]
 
     # Every step, get: action, value, and logprob
-    get_action_ops = [pi, v, logp_pi]
+    get_action_ops = [actions_pi, actions_v, actions_logp_pi]
 
     # Experience buffer
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     buf = GoalyBuffer(obs_dim, num_goals, act_dim, local_steps_per_epoch, gamma, lam)
 
     # Count variables
-    var_counts = tuple(core.count_vars(scope) for scope in ['pi', 'v'])
-    logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
+    var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
+    logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
     # PPO objectives
-    ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
+    ratio = tf.exp(actions_logp - actions_logp_old_ph)          # pi(a|s) / pi_old(a|s)
     min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
-    pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
-    v_loss = tf.reduce_mean((ret_ph - v)**2)
+    actions_pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
+    actions_v_loss = tf.reduce_mean((ret_ph - actions_v)**2)
 
     # Inverse Dynamics Model
     goal_scale = core.goal_scale(num_goals)
@@ -221,14 +221,14 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Info (useful to watch during learning)
-    approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
-    approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
+    approx_kl = tf.reduce_mean(actions_logp_old_ph - actions_logp)      # a sample estimate for KL-divergence, easy to compute
+    approx_ent = tf.reduce_mean(-actions_logp)                  # a sample estimate for entropy, also easy to compute
     clipped = tf.logical_or(ratio > (1+clip_ratio), ratio < (1-clip_ratio))
     clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
 
     # Optimizers
-    train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(pi_loss)
-    train_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(v_loss)
+    train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
+    train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
     train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
 
     sess = tf.Session()
@@ -238,35 +238,35 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     sess.run(sync_all_params())
 
     # Setup model saving
-    logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'pi': pi, 'v': v})
+    logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'actions_pi': actions_pi, 'actions_v': actions_v})
 
     def update():
         inputs = {k:v for k,v in zip(all_phs, buf.get())}
-        pi_l_old, v_l_old, inverse_loss_old, ent = sess.run(
-            [pi_loss, v_loss, inverse_loss, approx_ent], feed_dict=inputs)
+        actions_pi_l_old, actions_v_l_old, inverse_loss_old, ent = sess.run(
+            [actions_pi_loss, actions_v_loss, inverse_loss, approx_ent], feed_dict=inputs)
 
         # Training
-        for i in range(train_pi_iters):
-            _, kl = sess.run([train_pi, approx_kl], feed_dict=inputs)
+        for i in range(train_action_pi_iters):
+            _, kl = sess.run([train_actions_pi, approx_kl], feed_dict=inputs)
             kl = mpi_avg(kl)
             if kl > 1.5 * target_kl:
                 logger.log('Early stopping at step %d due to reaching max kl.'%i)
                 break
         logger.store(StopIter=i)
-        for _ in range(train_v_iters):
-            sess.run(train_v, feed_dict=inputs)
+        for _ in range(train_action_v_iters):
+            sess.run(train_actions_v, feed_dict=inputs)
 
         for _ in range(train_inverse_iters):
             sess.run(train_inverse, feed_dict=inputs)
 
         # Log changes from update
-        pi_l_new, v_l_new, inverse_loss_new, kl, cf, a_predicted_val = sess.run(
-            [pi_loss, v_loss, inverse_loss, approx_kl, clipfrac, a_predicted], feed_dict=inputs)
+        actions_pi_l_new, actions_v_l_new, inverse_loss_new, kl, cf, a_predicted_val = sess.run(
+            [actions_pi_loss, actions_v_loss, inverse_loss, approx_kl, clipfrac, a_predicted], feed_dict=inputs)
 
-        logger.store(LossPi=pi_l_old, LossV=v_l_old, LossInverse=inverse_loss_old,
+        logger.store(LossActionsPi=actions_pi_l_old, LossActionsV=actions_v_l_old, LossInverse=inverse_loss_old,
                      KL=kl, Entropy=ent, ClipFrac=cf,
-                     DeltaLossPi=(pi_l_new - pi_l_old),
-                     DeltaLossV=(v_l_new - v_l_old),
+                     DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old),
+                     DeltaLossActionsV=(actions_v_l_new - actions_v_l_old),
                      DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
 
     start_time = time.time()
@@ -280,7 +280,7 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
-            a, v_t, logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1), goals_ph: goals.reshape(1, -1)})
+            a, actions_v_t, actions_logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1), goals_ph: goals.reshape(1, -1)})
 
             # Debug: make the action function really simple
             # if o[0] < 0:
@@ -289,8 +289,8 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
             #     a = np.array([1])
 
             # save and log
-            buf.store(o, goals, a, r, v_t, logp_t)
-            logger.store(VVals=v_t)
+            buf.store(o, goals, a, r, actions_v_t, actions_logp_t)
+            logger.store(ActionsVVals=actions_v_t)
 
             o, r, d, _ = env.step(a[0])
 
@@ -302,7 +302,7 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
                 if not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
                 # if trajectory didn't reach terminal state, bootstrap value target
-                last_val = r if d else sess.run(v, feed_dict={x_ph: o.reshape(1,-1)})
+                last_val = r if d else sess.run(actions_v, feed_dict={x_ph: o.reshape(1,-1)})
                 buf.finish_path(last_val)
                 if terminal:
                     # only save EpRet / EpLen if trajectory finished
@@ -321,13 +321,13 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
         logger.log_tabular('Epoch', epoch)
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
-        logger.log_tabular('VVals', with_min_and_max=True)
+        logger.log_tabular('ActionsVVals', with_min_and_max=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
-        logger.log_tabular('LossPi', average_only=True)
-        logger.log_tabular('LossV', average_only=True)
+        logger.log_tabular('LossActionsPi', average_only=True)
+        logger.log_tabular('LossActionsV', average_only=True)
         logger.log_tabular('LossInverse', average_only=True)
-        logger.log_tabular('DeltaLossPi', average_only=True)
-        logger.log_tabular('DeltaLossV', average_only=True)
+        logger.log_tabular('DeltaLossActionsPi', average_only=True)
+        logger.log_tabular('DeltaLossActionsV', average_only=True)
         logger.log_tabular('DeltaLossInverse', average_only=True)
         logger.log_tabular('Entropy', average_only=True)
         logger.log_tabular('KL', average_only=True)
