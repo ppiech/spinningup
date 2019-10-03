@@ -212,18 +212,12 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     # Inverse Dynamics Model
     goal_scale = core.goal_scale(num_goals)
     a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
-
-    if isinstance(env.action_space, Discrete):
-        action_range = 1
-    else:
-        action_range = env.action_space.high - env.action_space.low
-
-    inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / action_range )**2
+    a_range = core.action_range(env.action_space)
+    inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range )**2
     inverse_action_loss = tf.reduce_mean(inverse_action_error)
     inverse_goal_error = core.goal_difference(goals_inverse, goals_predicted, goal_scale)**2
     inverse_action_error_goal_factor = tf.reduce_mean(inverse_action_error, 1)
     inverse_goal_loss = tf.reduce_mean(inverse_goal_error * (inverse_action_error_goal_factor + goal_error_base))
-
     inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Info (useful to watch during learning)
@@ -268,6 +262,7 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
         # Log changes from update
         pi_l_new, v_l_new, inverse_loss_new, kl, cf, a_predicted_val = sess.run(
             [pi_loss, v_loss, inverse_loss, approx_kl, clipfrac, a_predicted], feed_dict=inputs)
+
         logger.store(LossPi=pi_l_old, LossV=v_l_old, LossInverse=inverse_loss_old,
                      KL=kl, Entropy=ent, ClipFrac=cf,
                      DeltaLossPi=(pi_l_new - pi_l_old),

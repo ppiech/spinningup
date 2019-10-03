@@ -151,6 +151,16 @@ def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu)
     return a_inverse, goals_inverse, action_logits, goals_logits
 
 """
+Returns the high-low for action values, used to normalize action error in loss. 
+"""
+def action_range(action_space):
+    if isinstance(env.action_space, Discrete):
+        action_range = 1
+    else:
+        action_range = env.action_space.high - env.action_space.low
+    return action_range
+
+"""
 Goal Calculations
 """
 
