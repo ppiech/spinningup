@@ -210,11 +210,20 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     v_loss = tf.reduce_mean((ret_ph - v)**2)
 
     # Inverse Dynamics Model
+    goal_scale = core.goal_scale(num_goals)
     a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
 
-    inverse_action_error = (tf.cast(a_inverse, tf.float32) - a_predicted)**2
+    if isinstance(env.action_space, Discrete):
+        action_range = 1
+    else:
+        action_range = env.action_space.high - env.action_space.low
+
+    inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / action_range )**2
     inverse_action_loss = tf.reduce_mean(inverse_action_error)
-    inverse_goal_loss = tf.reduce_mean(((goals_inverse - goals_predicted)**2) * (inverse_action_error + goal_error_base))
+    inverse_goal_error = core.goal_difference(goals_inverse, goals_predicted, goal_scale)**2
+    inverse_action_error_goal_factor = tf.reduce_mean(inverse_action_error, 1)
+    inverse_goal_loss = tf.reduce_mean(inverse_goal_error * (inverse_action_error_goal_factor + goal_error_base))
+
     inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Info (useful to watch during learning)

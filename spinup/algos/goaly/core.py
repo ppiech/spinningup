@@ -149,3 +149,18 @@ def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu)
     action_logits = tf.slice(logits, [0, 0], [inverse_input_size, num_actions])
     goals_logits = tf.slice(logits, [0, num_actions], [inverse_input_size, num_goals])
     return a_inverse, goals_inverse, action_logits, goals_logits
+
+"""
+Goal Calculations
+"""
+
+"""
+Creates a scale of weights for goals applied to goal loss calculations.  The scale is an exponential based on
+powers of 2, where all values add up to 1.
+"""
+def goal_scale(num_goals):
+    return tf.constant(np.exp2(range(num_goals - 1, -1, -1)) / 2**num_goals, tf.float32)
+
+def goal_difference(g1, g2, goal_scale):
+    # return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
+    return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
