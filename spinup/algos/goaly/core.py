@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import scipy.signal
-from gym.spaces import Box, Discrete
+from gym.spaces import Box, Discrete, MultiBinary
 
 EPS = 1e-8
 
@@ -73,7 +73,11 @@ Policies
 
 def mlp_categorical_policy(x, goals, a, hidden_sizes, activation, output_activation, action_space):
     act_dim = action_space.n
-    logits = mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[act_dim], activation, None)
+    if goals is None:
+        features = x
+    else:
+        features = tf.concat([x, goals], 1)
+    logits = mlp(features, list(hidden_sizes)+[act_dim], activation, None)
     logp_all = tf.nn.log_softmax(logits)
     pi = tf.squeeze(tf.multinomial(logits,1), axis=1)
     logp = tf.reduce_sum(tf.one_hot(a, depth=act_dim) * logp_all, axis=1)
@@ -82,7 +86,11 @@ def mlp_categorical_policy(x, goals, a, hidden_sizes, activation, output_activat
 
 def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation, action_space):
     act_dim = a.shape.as_list()[-1]
-    mu = mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[act_dim], activation, output_activation)
+    if goals is None:
+        features = x
+    else:
+        features = tf.concat([x, goals], 1)
+    mu = mlp(features, list(hidden_sizes)+[act_dim], activation, output_activation)
     log_std = tf.get_variable(name='log_std', initializer=-0.5*np.ones(act_dim, dtype=np.float32))
     std = tf.exp(log_std)
     pi = mu + tf.random_normal(tf.shape(mu)) * std
@@ -115,7 +123,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu):
+def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu):
 
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
@@ -138,8 +146,8 @@ def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu)
         a_inverse = tf.slice(a, [0, 0], [inverse_input_size - 1] + list(env.action_space.shape))
         output_activation=None
 
-    num_goals = goals.get_shape().as_list()[-1]
-    goals_inverse = tf.slice(goals, [0, 0], [inverse_input_size - 1, num_goals])
+    goals_inverse = tf.slice(goals, [0], [inverse_input_size - 1])
+    goals_inverse_input = tf.one_hot(goals_inverse, num_goals)
 
     num_actions = a_inverse.get_shape().as_list()[-1]
 
@@ -148,7 +156,8 @@ def inverse_model(env, x, a, goals, hidden_sizes=(32,32), activation=tf.nn.relu)
     inverse_input_size = tf.shape(x_inverse)[0]
     action_logits = tf.slice(logits, [0, 0], [inverse_input_size, num_actions])
     goals_logits = tf.slice(logits, [0, num_actions], [inverse_input_size, num_goals])
-    return a_inverse, goals_inverse, action_logits, goals_logits
+    goals_predicted = tf.argmax(goals_logits, output_type=tf.int32)
+    return a_inverse, goals_inverse, action_logits, goals_predicted
 
 """
 Returns the high-low for action values, used to normalize action error in loss.
@@ -168,9 +177,9 @@ Goal Calculations
 Creates a scale of weights for goals applied to goal loss calculations.  The scale is an exponential based on
 powers of 2, where all values add up to 1.
 """
-def goal_scale(num_goals):
-    return tf.constant(np.exp2(range(num_goals - 1, -1, -1)) / 2**num_goals, tf.float32)
+def goal_scale(goal_octaves):
+    return tf.constant(np.exp2(range(goal_octaves - 1, -1, -1)) / 2**goal_octaves, tf.float32)
 
-def goal_difference(g1, g2, goal_scale):
-    # return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
-    return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
+# def goal_difference(g1, g2, goal_scale):
+#     # return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
+#     return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)

@@ -28,6 +28,7 @@ class GoalyBuffer:
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
     def store(self, obs, goals, act, rew, val, actions_logp):
+        
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
@@ -91,7 +92,7 @@ Proximal Policy Optimization (by clipping),
 with early stopping based on approximate KL
 
 """
-def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
+def goaly(env_fn, goal_octaves=2, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, action_pi_lr=3e-4,
         action_vf_lr=1e-3, inverse_lr=1e-2, train_action_pi_iters=80, train_action_v_iters=80, train_inverse_iters=80, lam=0.97, max_ep_len=1000,
         target_kl=0.01, logger_kwargs=dict(), save_freq=10, goal_error_base=0.1):
@@ -178,22 +179,28 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
 
-    # Share information about action space with policy architecture
-    ac_kwargs['action_space'] = env.action_space
-
     # Inputs to computation graph
     x_ph, a_ph = core.placeholders_from_spaces(env.observation_space, env.action_space)
     adv_ph, ret_ph, actions_logp_old_ph = core.placeholders(None, None, None)
-    goals_ph = core.placeholders_goals(num_goals, env)
+    num_goals = 2**goal_octaves
+    # goals_ph = core.placeholders_goals(num_goals, env)
+    goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ))
 
     # Main outputs from computation graph
-    actions_pi, actions_logp, actions_logp_pi, actions_v = actor_critic(x_ph, goals_ph, a_ph, **ac_kwargs)
+    with tf.variable_scope('goals'):
+        goals_pi, goals_logp, goals_logp_pi, goals_v = actor_critic(
+            x_ph, None, goals_ph, action_space=Discrete(num_goals), **ac_kwargs)
+
+    with tf.variable_scope('actions'):
+        goals_pi_actions_input = tf.one_hot(goals_pi, num_goals)
+        actions_pi, actions_logp, actions_logp_pi, actions_v = actor_critic(
+            x_ph, goals_pi_actions_input, a_ph, action_space=env.action_space, **ac_kwargs)
 
     # Need all placeholders in *this* order later (to zip with data from buffer)
     all_phs = [x_ph, goals_ph, a_ph, adv_ph, ret_ph, actions_logp_old_ph]
 
     # Every step, get: action, value, and logprob
-    get_action_ops = [actions_pi, actions_v, actions_logp_pi]
+    get_action_ops = [goals_pi, goals_v, goals_logp_pi, actions_pi, actions_v, actions_logp_pi]
 
     # Experience buffer
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
@@ -210,14 +217,14 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     actions_v_loss = tf.reduce_mean((ret_ph - actions_v)**2)
 
     # Inverse Dynamics Model
-    goal_scale = core.goal_scale(num_goals)
-    a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph)
+    goal_scale = core.goal_scale(goal_octaves)
+    a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
     inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range )**2
     inverse_action_loss = tf.reduce_mean(inverse_action_error)
-    inverse_goal_error = core.goal_difference(goals_inverse, goals_predicted, goal_scale)**2
+    inverse_goal_error = tf.cast(goals_inverse - goals_predicted, tf.float32) / num_goals
     inverse_action_error_goal_factor = tf.reduce_mean(inverse_action_error, 1)
-    inverse_goal_loss = tf.reduce_mean(inverse_goal_error * (inverse_action_error_goal_factor + goal_error_base))
+    inverse_goal_loss = tf.reduce_mean((inverse_goal_error**2) * (inverse_action_error_goal_factor + goal_error_base))
     inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Info (useful to watch during learning)
@@ -272,15 +279,12 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
     start_time = time.time()
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
-    # For now always set goals to zeros
-    goals = np.zeros((4), dtype=np.float32)
-
     ep_obs = [[]]
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
-            a, actions_v_t, actions_logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1), goals_ph: goals.reshape(1, -1)})
+            goals, goals_v_t, goals_logp_pi, a, actions_v_t, actions_logp_t = sess.run(get_action_ops, feed_dict={x_ph: o.reshape(1,-1)})
 
             # Debug: make the action function really simple
             # if o[0] < 0:
@@ -289,7 +293,7 @@ def goaly(env_fn, num_goals=4, actor_critic=core.mlp_actor_critic, ac_kwargs=dic
             #     a = np.array([1])
 
             # save and log
-            buf.store(o, goals, a, r, actions_v_t, actions_logp_t)
+            buf.store(o, goals, goals_v_t, goals_logp_pia, r, actions_v_t, actions_logp_t)
             logger.store(ActionsVVals=actions_v_t)
 
             o, r, d, _ = env.step(a[0])
