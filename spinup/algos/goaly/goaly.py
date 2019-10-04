@@ -84,20 +84,20 @@ class ObservationsActionsAndGoalsBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, obs_dim, num_goals, act_dim, size):
+    def __init__(self, obs_dim, act_dim, size):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.goals_buf = np.zeros((size, num_goals), dtype=np.float32)
+        self.goals_buf = np.zeros(size , dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.ptr, self.max_size = 0, size
 
-    def store(self, obs, goals, act):
+    def store(self, obs, goal, act):
 
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
-        self.goals_buf[self.ptr] = goals
+        self.goals_buf[self.ptr] = goal
         self.act_buf[self.ptr] = act
         self.ptr += 1
 
@@ -222,7 +222,7 @@ def goaly(
     goals_adv_ph, goals_ret_ph, goals_logp_old_ph = core.placeholders(None, None, None)
     num_goals = 2**goal_octaves
     # goals_ph = core.placeholders_goals(num_goals, env)
-    goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ))
+    goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
 
     # Main outputs from computation graph
     with tf.variable_scope('goals'):
@@ -241,7 +241,7 @@ def goaly(
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
-    trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, num_goals, act_dim, local_steps_per_epoch)
+    trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, local_steps_per_epoch)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -297,7 +297,7 @@ def goaly(
         trajectory = {k:v for k,v in zip([x_ph, goals_ph, a_ph], trajectory_buf.get())}
 
         # Training
-        def train_pi(inputs, train_iters, trains_pi, approx_kl, target_kl):
+        def train_ppo(inputs, train_iters, train_pi, approx_kl, target_kl):
             for i in range(train_iters):
                 _, kl = sess.run([train_pi, approx_kl], feed_dict=inputs)
                 kl = mpi_avg(kl)
@@ -310,7 +310,7 @@ def goaly(
         goals_training_input = {k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_buf.get())}
         goals_training_input.update(trajectory)
         goals_pi_l_old, goals_v_l_old, goals_ent = sess.run([goals_pi_loss, goals_v_loss, goals_approx_ent], feed_dict=goals_training_input)
-        stop_iter = train_pi(goals_training_input, train_goals_pi_iters, train_goals_pi, goals_approx_kl)
+        stop_iter = train_ppo(goals_training_input, train_goals_pi_iters, train_goals_pi, goals_approx_kl, goals_target_kl)
         logger.store(GoalsStopIter=stop_iter)
 
         for _ in range(train_goals_v_iters):
@@ -320,7 +320,7 @@ def goaly(
         actions_training_input = {k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_buf.get())}
         actions_training_input.update(trajectory)
         actions_pi_l_old, actions_v_l_old, actions_ent = sess.run([actions_pi_loss, actions_v_loss, actions_approx_ent], feed_dict=actions_training_input)
-        stop_iter = train_pi(actions_training_input, actions_goals_pi_iters, actions_goals_pi, actions_approx_kl)
+        stop_iter = train_ppo(actions_training_input, actions_goals_pi_iters, actions_goals_pi, actions_approx_kl, actions_target_kl)
         logger.store(GoalsStopIter=stop_iter)
 
         for _ in range(train_action_v_iters):
@@ -351,16 +351,10 @@ def goaly(
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
-            goals, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = sess.run(get_action_ops, feed_dict={x_ph: observations.reshape(1,-1)})
-
-            # Debug: make the action function really simple
-            # if o[0] < 0:
-            #     a = np.array([0])
-            # else:
-            #     a = np.array([1])
+            goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = sess.run(get_action_ops, feed_dict={x_ph: observations.reshape(1,-1)})
 
             # save and log
-            trajectory_buf.store(observations, goals, actions)
+            trajectory_buf.store(observations, goal, actions)
             goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
             actions_ppo_buf.store(reward, actions_v_t, actions_logp_t)
             logger.store(ActionsVVals=actions_v_t)
