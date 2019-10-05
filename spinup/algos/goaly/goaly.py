@@ -252,6 +252,17 @@ def goaly(
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
     logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
+    # Inverse Dynamics Model
+    goal_scale = core.goal_scale(goal_octaves)
+    a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
+    a_range = core.action_range(env.action_space)
+    inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)**2
+    inverse_action_loss = tf.reduce_mean(inverse_action_error)
+    inverse_goal_error = tf.cast(goals_inverse - goals_predicted, tf.float32) / num_goals
+    inverse_action_error_goal_factor = tf.reduce_mean(inverse_action_error, 1)
+    inverse_goal_loss = tf.reduce_mean((inverse_goal_error**2) * (inverse_action_error_goal_factor + goal_error_base))
+    inverse_loss = inverse_action_loss + inverse_goal_loss
+
     def ppo_objectives(adv_ph, ret_ph, logp, logp_old_ph, clip_ratio):
         ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
         min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
@@ -271,17 +282,6 @@ def goaly(
     actions_pi_loss, actions_v_loss, actions_approx_kl, actions_approx_ent, actions_clipfrac = ppo_objectives(
         actions_adv_ph, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
-    # Inverse Dynamics Model
-    goal_scale = core.goal_scale(goal_octaves)
-    a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
-    a_range = core.action_range(env.action_space)
-    inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)**2
-    inverse_action_loss = tf.reduce_mean(inverse_action_error)
-    inverse_goal_error = tf.cast(goals_inverse - goals_predicted, tf.float32) / num_goals
-    inverse_action_error_goal_factor = tf.reduce_mean(inverse_action_error, 1)
-    inverse_goal_loss = tf.reduce_mean((inverse_goal_error**2) * (inverse_action_error_goal_factor + goal_error_base))
-    inverse_loss = inverse_action_loss + inverse_goal_loss
-    # inverse_loss = inverse_action_loss + inverse_goal_error
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
@@ -368,6 +368,8 @@ def goaly(
             trajectory_buf.store(observations, goal, actions)
             goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
             actions_ppo_buf.store(reward, actions_v_t, actions_logp_t)
+            logger.store(ActionsVVals=actions_v_t)
+            logger.store(GoalsVVals=goals_v_t)
 
             observations, reward, done, _ = env.step(actions[0])
 
@@ -401,25 +403,26 @@ def goaly(
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
-        logger.log_tabular('ActionsVVals', with_min_and_max=True)
         logger.log_tabular('LossGoalsPi', average_only=True)
         logger.log_tabular('DeltaLossGoalsPi', average_only=True)
         logger.log_tabular('LossGoalsV', average_only=True)
         logger.log_tabular('DeltaLossGoalsV', average_only=True)
-        logger.log_tabular('DeltaLossInverse', average_only=True)
+        logger.log_tabular('GoalsVVals', with_min_and_max=True)
         logger.log_tabular('GoalsEntropy', average_only=True)
         logger.log_tabular('GoalsKL', average_only=True)
         logger.log_tabular('GoalsClipFrac', average_only=True)
         logger.log_tabular('GoalsStopIter', average_only=True)
         logger.log_tabular('LossActionsPi', average_only=True)
+        logger.log_tabular('DeltaLossActionsPi', average_only=True)
         logger.log_tabular('LossActionsV', average_only=True)
+        logger.log_tabular('DeltaLossActionsV', average_only=True)
+        logger.log_tabular('ActionsVVals', with_min_and_max=True)
         logger.log_tabular('ActionsEntropy', average_only=True)
         logger.log_tabular('ActionsKL', average_only=True)
         logger.log_tabular('ActionsClipFrac', average_only=True)
-        logger.log_tabular('DeltaLossActionsPi', average_only=True)
-        logger.log_tabular('DeltaLossActionsV', average_only=True)
         logger.log_tabular('ActionsStopIter', average_only=True)
         logger.log_tabular('LossInverse', average_only=True)
+        logger.log_tabular('DeltaLossInverse', average_only=True)
         logger.log_tabular('Time', time.time()-start_time)
         logger.dump_tabular()
 
