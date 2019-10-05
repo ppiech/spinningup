@@ -10,11 +10,11 @@ def combined_shape(length, shape=None):
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
 
-def placeholder(dim=None):
-    return tf.placeholder(dtype=tf.float32, shape=combined_shape(None, dim))
+def placeholder(dim=None, name=None):
+    return tf.placeholder(dtype=tf.float32, shape=combined_shape(None, dim), name=name)
 
 def placeholders(*args):
-    return [placeholder(dim) for dim in args]
+    return [placeholder(info[0], info[1]) for info in args]
 
 def placeholders_goals(dim, env):
     if isinstance(env.observation_space, Box):
@@ -23,15 +23,17 @@ def placeholders_goals(dim, env):
         return tf.placeholder(dtype=tf.int32, shape=(None, ))
     raise NotImplementedError
 
-def placeholder_from_space(space):
+def placeholder_from_space(space, name):
     if isinstance(space, Box):
-        return placeholder(space.shape)
+        return placeholder(space.shape, name)
     elif isinstance(space, Discrete):
-        return tf.placeholder(dtype=tf.int32, shape=(None,))
+        return tf.placeholder(dtype=tf.int32, shape=(None,), name=name)
     raise NotImplementedError
 
-def placeholders_from_spaces(*args):
-    return [placeholder_from_space(space) for space in args]
+def placeholders_from_env(env):
+    observations_ph = placeholder_from_space(env.observation_space, "observations")
+    actions_ph = placeholder_from_space(env.action_space, "actions")
+    return observations_ph, actions_ph
 
 def mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
     for h in hidden_sizes[:-1]:
@@ -156,7 +158,7 @@ def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=
     inverse_input_size = tf.shape(x_inverse)[0]
     action_logits = tf.slice(logits, [0, 0], [inverse_input_size, num_actions])
     goals_logits = tf.slice(logits, [0, num_actions], [inverse_input_size, num_goals])
-    goals_predicted = tf.argmax(goals_logits, output_type=tf.int32)
+    goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
     return a_inverse, goals_inverse, action_logits, goals_predicted
 
 """
