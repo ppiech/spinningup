@@ -265,8 +265,6 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
 
             o, r, d, _ = env.step(a[0])
 
-            # ep_obs[-1].append(o[0])
-
             ep_ret += r
             ep_len += 1
 

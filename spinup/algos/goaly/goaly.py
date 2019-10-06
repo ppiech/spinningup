@@ -239,9 +239,6 @@ def goaly(
         actions_pi, actions_logp, actions_logp_pi, actions_v = actor_critic(
             x_ph, goals_pi_actions_input, a_ph, action_space=env.action_space, **ac_kwargs)
 
-    # Every step, get: action, value, and logprob
-    get_action_ops = [goals_pi, goals_v, goals_logp_pi, actions_pi, actions_v, actions_logp_pi]
-
     # Experience buffer
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
@@ -282,6 +279,8 @@ def goaly(
     actions_pi_loss, actions_v_loss, actions_approx_kl, actions_approx_ent, actions_clipfrac = ppo_objectives(
         actions_adv_ph, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
+    # goaly rewards
+    stability_reward = 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
@@ -310,14 +309,14 @@ def goaly(
                 _, kl = sess.run([train_pi, approx_kl], feed_dict=inputs)
                 kl = mpi_avg(kl)
                 if kl > 1.5 * target_kl:
-                    logger.log('Early stopping at step %d due to reaching max kl.'%i)
+                    # logger.log('Early stopping at step %d due to reaching max kl.'%i)
                     break
             return i
 
         # Train goals
         goals_pi_l_old, goals_v_l_old, goals_ent = sess.run([goals_pi_loss, goals_v_loss, goals_approx_ent], feed_dict=inputs)
         stop_iter = train_ppo(train_goals_pi_iters, train_goals_pi, goals_approx_kl, goals_target_kl)
-        logger.store(GoalsStopIter=stop_iter)
+        # logger.store(GoalsStopIter=stop_iter)
 
         for _ in range(train_goals_v_iters):
             sess.run(train_goals_v, feed_dict=inputs)
@@ -325,7 +324,7 @@ def goaly(
         # Train actions
         actions_pi_l_old, actions_v_l_old, actions_ent = sess.run([actions_pi_loss, actions_v_loss, actions_approx_ent], feed_dict=inputs)
         stop_iter = train_ppo(train_actions_pi_iters, train_actions_pi, actions_approx_kl, actions_target_kl)
-        logger.store(ActionsStopIter=stop_iter)
+        # logger.store(ActionsStopIter=stop_iter)
 
         for _ in range(train_actions_v_iters):
             sess.run(train_actions_v, feed_dict=inputs)
@@ -345,33 +344,53 @@ def goaly(
                 inverse_loss, a_predicted, goals_predicted],
                 feed_dict=inputs)
 
-        logger.store(LossActionsPi=actions_pi_l_old, LossActionsV=actions_v_l_old,
-                     DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old), DeltaLossActionsV=(actions_v_l_new - actions_v_l_old),
-                     ActionsKL=actions_kl, ActionsEntropy=actions_ent, ActionsClipFrac=actions_cf,
-                     LossGoalsPi=goals_pi_l_old, LossGoalsV=goals_v_l_old,
-                     DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old), DeltaLossGoalsV=(goals_v_l_new - goals_v_l_old),
-                     GoalsKL=goals_kl, GoalsEntropy=goals_ent, GoalsClipFrac=goals_cf,
-                     LossInverse=inverse_loss_old, DeltaLossInverse=(inverse_loss_new - inverse_loss_old)
-                     )
+        logger.store(LossActionsPi=actions_pi_l_old)
+        logger.store(LossActionsV=actions_v_l_old)
+        # logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
+        # logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
+        # logger.store(ActionsKL=actions_kl)
+        # logger.store(ActionsEntropy=actions_ent)
+        # logger.store(ActionsClipFrac=actions_cf)
+        logger.store(LossGoalsPi=goals_pi_l_old)
+        logger.store(LossGoalsV=goals_v_l_old)
+        # logger.store(DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old))
+        # logger.store(DeltaLossGoalsV=(goals_v_l_new - goals_v_l_old))
+        # logger.store(GoalsKL=goals_kl)
+        # logger.store(GoalsEntropy=goals_ent)
+        # logger.store(GoalsClipFrac=goals_cf)
+        logger.store(LossInverse=inverse_loss_old)
+        logger.store(DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
+    stability = 0
 
     ep_obs = [[]]
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
-            goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = sess.run(get_action_ops, feed_dict={x_ph: observations.reshape(1,-1)})
+            # Every step, get: action, value, and logprob
+            goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = \
+                sess.run([goals_pi, goals_v, goals_logp_pi, actions_pi, actions_v, actions_logp_pi],
+                         feed_dict={x_ph: observations.reshape(1,-1)})
 
             # save and log
             trajectory_buf.store(observations, goal, actions)
             goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
-            actions_ppo_buf.store(reward, actions_v_t, actions_logp_t)
-            logger.store(ActionsVVals=actions_v_t)
-            logger.store(GoalsVVals=goals_v_t)
+            actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
+            # logger.store(ActionsVVals=actions_v_t)
+            # logger.store(GoalsVVals=goals_v_t)
+            logger.store(Stability=stability)
+            logger.store(Goal=goal)
 
-            observations, reward, done, _ = env.step(actions[0])
+            new_observations, reward, done, _ = env.step(actions[0])
+
+            # Calculate stability reward
+            x = np.array([observations, new_observations])
+            stability = sess.run([stability_reward], feed_dict={x_ph: x, a_ph: np.array([actions[0], actions[0]]), goals_ph: np.array([goal[0], goal[0]])})
+            stability = stability[0]
+            observations = new_observations
 
             ep_ret += reward
             ep_len += 1
@@ -402,27 +421,29 @@ def goaly(
         logger.log_tabular('Epoch', epoch)
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
+        logger.log_tabular('Stability', with_min_and_max=True)
+        logger.log_tabular('Goal', with_min_and_max=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossGoalsPi', average_only=True)
-        logger.log_tabular('DeltaLossGoalsPi', average_only=True)
+        # logger.log_tabular('DeltaLossGoalsPi', average_only=True)
         logger.log_tabular('LossGoalsV', average_only=True)
-        logger.log_tabular('DeltaLossGoalsV', average_only=True)
-        logger.log_tabular('GoalsVVals', with_min_and_max=True)
-        logger.log_tabular('GoalsEntropy', average_only=True)
-        logger.log_tabular('GoalsKL', average_only=True)
-        logger.log_tabular('GoalsClipFrac', average_only=True)
-        logger.log_tabular('GoalsStopIter', average_only=True)
+        # logger.log_tabular('DeltaLossGoalsV', average_only=True)
+        # logger.log_tabular('GoalsVVals', with_min_and_max=True)
+        # logger.log_tabular('GoalsEntropy', average_only=True)
+        # logger.log_tabular('GoalsKL', average_only=True)
+        # logger.log_tabular('GoalsClipFrac', average_only=True)
+        # logger.log_tabular('GoalsStopIter', average_only=True)
         logger.log_tabular('LossActionsPi', average_only=True)
-        logger.log_tabular('DeltaLossActionsPi', average_only=True)
+        # logger.log_tabular('DeltaLossActionsPi', average_only=True)
         logger.log_tabular('LossActionsV', average_only=True)
-        logger.log_tabular('DeltaLossActionsV', average_only=True)
-        logger.log_tabular('ActionsVVals', with_min_and_max=True)
-        logger.log_tabular('ActionsEntropy', average_only=True)
-        logger.log_tabular('ActionsKL', average_only=True)
-        logger.log_tabular('ActionsClipFrac', average_only=True)
-        logger.log_tabular('ActionsStopIter', average_only=True)
+        # logger.log_tabular('DeltaLossActionsV', average_only=True)
+        # logger.log_tabular('ActionsVVals', with_min_and_max=True)
+        # logger.log_tabular('ActionsEntropy', average_only=True)
+        # logger.log_tabular('ActionsKL', average_only=True)
+        # logger.log_tabular('ActionsClipFrac', average_only=True)
+        # logger.log_tabular('ActionsStopIter', average_only=True)
         logger.log_tabular('LossInverse', average_only=True)
-        logger.log_tabular('DeltaLossInverse', average_only=True)
+        # logger.log_tabular('DeltaLossInverse', average_only=True)
         logger.log_tabular('Time', time.time()-start_time)
         logger.dump_tabular()
 
