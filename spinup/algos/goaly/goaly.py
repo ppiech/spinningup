@@ -3,10 +3,13 @@ import tensorflow as tf
 import gym
 import time
 import spinup.algos.goaly.core as core
-from spinup.utils.logx import EpochLogger
+from spinup.utils.logx import Logger, EpochLogger
 from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
 from gym.spaces import Box, Discrete
+
+from sklearn.decomposition import PCA
+
 
 class PPOBuffer:
     """
@@ -123,7 +126,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=2, goal_error_base=0.1,
+        goal_octaves=3, goal_error_base=0.1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -208,6 +211,8 @@ def goaly(
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
+    goal_logger = Logger(output_fname='goals.txt', **logger_kwargs)
+
     seed += 10000 * proc_id()
     tf.set_random_seed(seed)
     np.random.seed(seed)
@@ -226,7 +231,7 @@ def goaly(
     goals_logp_old_ph = core.placeholder(None, "goals_logp_old_ph")
 
     num_goals = 2**goal_octaves
-    # goals_ph = core.placeholders_goals(num_goals, env)
+    goal_discounts = np.full((goal_octaves), 0.5)
     goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
 
     # Main outputs from computation graph
@@ -250,7 +255,6 @@ def goaly(
     logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
     # Inverse Dynamics Model
-    goal_scale = core.goal_scale(goal_octaves)
     a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
     inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)**2
@@ -363,7 +367,7 @@ def goaly(
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-    stability = 0
+    stability, discounted_stability = 0, 0
 
     ep_obs = [[]]
 
@@ -377,12 +381,24 @@ def goaly(
 
             # save and log
             trajectory_buf.store(observations, goal, actions)
-            goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
+            # debug: no external reward
+            # goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
+            goals_ppo_buf.store(discounted_stability, goals_v_t, goals_logp_t)
             actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
             # logger.store(ActionsVVals=actions_v_t)
             # logger.store(GoalsVVals=goals_v_t)
             logger.store(Stability=stability)
             logger.store(Goal=goal)
+
+            goal_logger.log_tabular('Epoch', epoch)
+            for i in range(0, len(observations)):
+                goal_logger.log_tabular('Observations{}'.format(i), observations[i])
+            for i in range(0, len(actions[0])):
+                goal_logger.log_tabular('Actions{}'.format(i), actions[0][i])
+            goal_logger.log_tabular('Goal', goal[0])
+            goal_logger.dump_tabular(file_only=True)
+
+            logger.storeOne("Goal{}Action".format(goal[0]), actions[0])
 
             new_observations, reward, done, _ = env.step(actions[0])
 
@@ -391,6 +407,12 @@ def goaly(
             stability = sess.run([stability_reward], feed_dict={x_ph: x, a_ph: np.array([actions[0], actions[0]]), goals_ph: np.array([goal[0], goal[0]])})
             stability = stability[0]
             observations = new_observations
+
+            # Calculate goal reward
+            core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
+            goal_discount = core.get_goal_discount(goal_discounts, goal)
+            logger.store(GoalDiscount=goal_discount)
+            discounted_stability = goal_discount * stability
 
             ep_ret += reward
             ep_len += 1
@@ -417,12 +439,17 @@ def goaly(
         # Perform PPO update!
         update()
 
+        print(goal_discounts)
+
         # Log info about epoch
         logger.log_tabular('Epoch', epoch)
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
         logger.log_tabular('Stability', with_min_and_max=True)
+        logger.log_tabular('GoalDiscount', with_min_and_max=True)
         logger.log_tabular('Goal', with_min_and_max=True)
+        for i in range(0, num_goals):
+            logger.log_tabular("Goal{}Action".format(i))
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossGoalsPi', average_only=True)
         # logger.log_tabular('DeltaLossGoalsPi', average_only=True)

@@ -178,9 +178,26 @@ Goal Calculations
 Creates a scale of weights for goals applied to goal loss calculations.  The scale is an exponential based on
 powers of 2, where all values add up to 1.
 """
-def goal_scale(goal_octaves):
-    return tf.constant(np.exp2(range(goal_octaves - 1, -1, -1)) / 2**goal_octaves, tf.float32)
+def update_reward_dicscounts(reward_discount, reward, discount_rate):
+    discount = reward_discount * discount_rate
+    if goal & (1 << i):
+        reward_discount -= discount
+    else:
+        reward_discount += discount
 
-# def goal_difference(g1, g2, goal_scale):
-#     # return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
-#     return tf.reduce_sum(tf.abs(g1 - g2) * goal_scale, 1)
+def get_goal_discount(goal_discounts, goal):
+    discount = 0
+    for i in range(0, len(goal_discounts)):
+        if goal & (1 << i):
+            octave_discount = goal_discounts[i]
+        else:
+            octave_discount = 1 - goal_discounts[i]
+        discount += octave_discount / (2**i)
+    return discount
+
+def update_goal_discounts(goal_discounts, goal, discount_rate):
+    for i in range(0, len(goal_discounts)):
+        if (goal & (1 << i)):
+            goal_discounts[i] -= goal_discounts[i] * discount_rate
+        else:
+            goal_discounts[i] += (1 - goal_discounts[i]) * discount_rate
