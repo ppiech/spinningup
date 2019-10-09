@@ -211,7 +211,7 @@ def goaly(
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
-    goal_logger = Logger(output_fname='goals.txt', **logger_kwargs)
+    goal_logger = Logger(output_fname='pca.txt', **logger_kwargs)
 
     seed += 10000 * proc_id()
     tf.set_random_seed(seed)
@@ -257,12 +257,18 @@ def goaly(
     # Inverse Dynamics Model
     a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
-    inverse_action_error = ((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)**2
-    inverse_action_loss = tf.reduce_mean(inverse_action_error)
-    inverse_goal_error = tf.cast(goals_inverse - goals_predicted, tf.float32) / num_goals
-    inverse_action_error_goal_factor = tf.reduce_mean(inverse_action_error, 1)
-    inverse_goal_loss = tf.reduce_mean((inverse_goal_error**2) * (inverse_action_error_goal_factor + goal_error_base))
+    inverse_action_diff = tf.abs((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)
+    inverse_action_loss = tf.reduce_mean(inverse_action_diff**2) # For training inverse model
+    inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted, tf.float32) / num_goals)
+
+    # Remember goals in little explored areas of state space (when action error is high), but even if action is well
+    # known move the goal towards the new goal by a small amount
+    inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2) * (inverse_action_diff + goal_error_base))
     inverse_loss = inverse_action_loss + inverse_goal_loss
+
+    # Errors used for calculating return after each step.
+    inverse_action_error = tf.reduce_mean(inverse_action_diff, 1)
+    inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
 
     def ppo_objectives(adv_ph, ret_ph, logp, logp_old_ph, clip_ratio):
         ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
@@ -387,7 +393,6 @@ def goaly(
             actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
             # logger.store(ActionsVVals=actions_v_t)
             # logger.store(GoalsVVals=goals_v_t)
-            logger.store(Stability=stability)
             logger.store(Goal=goal)
 
             goal_logger.log_tabular('Epoch', epoch)
@@ -398,15 +403,16 @@ def goaly(
             goal_logger.log_tabular('Goal', goal[0])
             goal_logger.dump_tabular(file_only=True)
 
-            logger.storeOne("Goal{}Action".format(goal[0]), actions[0])
-
             new_observations, reward, done, _ = env.step(actions[0])
 
             # Calculate stability reward
             x = np.array([observations, new_observations])
-            stability = sess.run([stability_reward], feed_dict={x_ph: x, a_ph: np.array([actions[0], actions[0]]), goals_ph: np.array([goal[0], goal[0]])})
+            stability, goal_error, action_error = \
+                sess.run([stability_reward, inverse_action_error, inverse_goal_error],
+                          feed_dict={x_ph: x, a_ph: np.array([actions[0], actions[0]]), goals_ph: np.array([goal[0], goal[0]])})
             stability = stability[0]
             observations = new_observations
+            logger.store(Stability=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
 
             # Calculate goal reward
             core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
@@ -445,11 +451,10 @@ def goaly(
         logger.log_tabular('Epoch', epoch)
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
-        logger.log_tabular('Stability', with_min_and_max=True)
-        logger.log_tabular('GoalDiscount', with_min_and_max=True)
-        logger.log_tabular('Goal', with_min_and_max=True)
-        for i in range(0, num_goals):
-            logger.log_tabular("Goal{}Action".format(i))
+        logger.log_tabular('Stability', average_only=True)
+        logger.log_tabular('StabilityActionError', average_only=True)
+        logger.log_tabular('StabilityGoalError', average_only=True)
+        logger.log_tabular('GoalDiscount')
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossGoalsPi', average_only=True)
         # logger.log_tabular('DeltaLossGoalsPi', average_only=True)
