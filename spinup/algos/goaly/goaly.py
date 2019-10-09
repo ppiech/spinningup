@@ -126,7 +126,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=8, goal_error_base=0.1, goal_discount_rate=1e-2,
+        goal_octaves=2, goal_error_base=0.1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -289,7 +289,7 @@ def goaly(
     actions_pi_loss, actions_v_loss, actions_approx_kl, actions_approx_ent, actions_clipfrac = ppo_objectives(
         actions_adv_ph, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
-    # goaly rewards
+    # goaly reward
     stability_reward = 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
 
     # Optimizers
@@ -412,7 +412,7 @@ def goaly(
                           feed_dict={x_ph: x, a_ph: np.array([actions[0], actions[0]]), goals_ph: np.array([goal[0], goal[0]])})
             stability = stability[0]
             observations = new_observations
-            logger.store(Stability=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
+            logger.store(StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
 
             # Calculate goal reward
             core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
@@ -445,16 +445,14 @@ def goaly(
         # Perform PPO update!
         update()
 
-        print(goal_discounts)
-
         # Log info about epoch
         logger.log_tabular('Epoch', epoch)
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
-        logger.log_tabular('Stability', average_only=True)
+        logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
-        logger.log_tabular('GoalDiscount')
+        logger.log_tabular('GoalDiscount', average_only=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossGoalsPi', average_only=True)
         # logger.log_tabular('DeltaLossGoalsPi', average_only=True)
