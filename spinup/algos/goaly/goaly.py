@@ -126,7 +126,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=3, goal_error_base=0.1, goal_discount_rate=1e-2,
+        goal_octaves=8, goal_error_base=0.1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -388,8 +388,8 @@ def goaly(
             # save and log
             trajectory_buf.store(observations, goal, actions)
             # debug: no external reward
-            # goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
-            goals_ppo_buf.store(discounted_stability, goals_v_t, goals_logp_t)
+            # goals_ppo_buf.store(discounted_stability, goals_v_t, goals_logp_t)
+            goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
             actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
             # logger.store(ActionsVVals=actions_v_t)
             # logger.store(GoalsVVals=goals_v_t)

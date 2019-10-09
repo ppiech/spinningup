@@ -6,7 +6,9 @@ import os
 import os.path as osp
 import numpy as np
 
+# pca
 import colorsys
+from matplotlib.animation import FuncAnimation
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
@@ -66,30 +68,31 @@ def plot_pca(df):
 
     x = df.loc[:, features].values
     y = df.loc[:,['Goal']].values
-    epochs = df.loc[:,['Epoch']].values
+    num_epochs = df['Epoch'].max()
 
     x = StandardScaler().fit_transform(x)
 
     pca = PCA(n_components=2)
-    principalComponents = pca.fit_transform(x)
-    principalDf = pd.DataFrame(data = principalComponents, columns = ['c1', 'c2'])
-    finalDf = pd.concat([principalDf, df[['Goal']], df[['Epoch']]], axis = 1)
+    principal_components = pca.fit_transform(x)
+    principal_df = pd.DataFrame(data = principal_components, columns = ['c1', 'c2'])
+    final_df = pd.concat([principal_df, df[['Goal']], df[['Epoch']]], axis = 1)
 
     fig = plt.figure(figsize = (8,8))
-    ax = fig.add_subplot(1,1,1)
-    ax.set_xlabel('c1', fontsize = 15)
-    ax.set_ylabel('2', fontsize = 15)
-    ax.set_title('2 component PCA', fontsize = 20)
-    num_goals = finalDf['Goal'].max()
-    goals = range(num_goals)
-    epoch = 3.
-    ax.scatter(finalDf['c1'], finalDf['c2'], c = finalDf['Goal'], cmap=plt.cm.Spectral, s = 10)
-    # for goal in goals:
-    #     indicesToKeep = finalDf['Goal'] == float(goal)
-    #     # ax.scatter(finalDf.loc[indicesToKeep, 'c1'], finalDf.loc[indicesToKeep, 'c2'], s = 50)
-    #     ax.scatter(finalDf['c1'], finalDf['c2'], c = goals s = 50)
-    ax.legend(goals)
+    ax = plt.axes(xlim=(final_df['c1'].min(), final_df['c1'].max()), ylim=(final_df['c2'].min(), final_df['c2'].max()))
     ax.grid()
+    ax.set_title('Goals mapped over Action/Observation space', fontsize = 10)
+    num_goals = final_df['Goal'].max()
+    goals = range(num_goals)
+    scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
+
+    def animate(epoch):
+        ax.set_title('Goals mapped over Action/Observation space (epoch {})'.format(epoch))
+        epoch_indeces = final_df['Epoch'] == float(epoch)
+        scatter.set_offsets(pd.concat([final_df.loc[epoch_indeces, 'c1'], final_df.loc[epoch_indeces, 'c2']], axis=1))
+        scatter.set_array(final_df.loc[epoch_indeces, 'Goal'])
+
+    anim = FuncAnimation(fig, animate, interval=2000, frames=num_epochs)
+    plt.show()
 
 def get_datasets(logdir, condition=None, filename='progress.txt'):
     """
@@ -195,7 +198,6 @@ def make_plots(all_logdirs, legend=None, xaxis=None, values=None, count=False,
 
     if pca:
         plot_pca(data[0])
-        plt.show()
     else:
         values = values if isinstance(values, list) else [values]
         condition = 'Condition2' if count else 'Condition1'
