@@ -7,10 +7,11 @@ import os.path as osp
 import numpy as np
 
 # pca
-import colorsys
+import matplotlib.cm as cm
 from matplotlib.animation import FuncAnimation
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+import bisect
 
 DIV_LINE_WIDTH = 50
 
@@ -64,18 +65,22 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
 def plot_pca(df):
 
+    visible = 1
     features = ['Observations0', 'Observations1', 'Observations2', 'Actions0']
 
     x = df.loc[:, features].values
     y = df.loc[:,['Goal']].values
     num_epochs = df['Epoch'].max()
+    num_episodes = df['Episode'].max()
 
     x = StandardScaler().fit_transform(x)
-
     pca = PCA(n_components=2)
     principal_components = pca.fit_transform(x)
     principal_df = pd.DataFrame(data = principal_components, columns = ['c1', 'c2'])
-    final_df = pd.concat([principal_df, df[['Goal']], df[['Epoch']]], axis = 1)
+    final_df = pd.concat([principal_df, df[['Goal']], df[['Epoch']], df[['Episode']]], axis = 1)
+
+    goals_series = df['Goal']
+    goal_starts = goals_series.loc[goals_series.shift() != goals_series].index
 
     fig = plt.figure(figsize = (8,8))
     ax = plt.axes(xlim=(final_df['c1'].min(), final_df['c1'].max()), ylim=(final_df['c2'].min(), final_df['c2'].max()))
@@ -83,15 +88,47 @@ def plot_pca(df):
     ax.set_title('Goals mapped over Action/Observation space', fontsize = 10)
     num_goals = final_df['Goal'].max()
     goals = range(num_goals)
-    scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
 
-    def animate(epoch):
-        ax.set_title('Goals mapped over Action/Observation space (epoch {})'.format(epoch))
-        epoch_indeces = final_df['Epoch'] == float(epoch)
-        scatter.set_offsets(pd.concat([final_df.loc[epoch_indeces, 'c1'], final_df.loc[epoch_indeces, 'c2']], axis=1))
-        scatter.set_array(final_df.loc[epoch_indeces, 'Goal'])
+    # scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
 
-    anim = FuncAnimation(fig, animate, interval=2000, frames=num_epochs)
+    plots = {}
+    cmap = cm.get_cmap('bwr')
+    def init():
+        ax.set_title('Goals mapped over Action/Observation space')
+
+    def animate(episode):
+        print(episode)
+        ax.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
+
+        to_remove = episode - visible if episode >= visible else (episode - visible + num_episodes)
+        if to_remove in plots:
+            [plot.remove() for plot in plots[to_remove]]
+            del plots[to_remove]
+        if episode in plots:
+            [plot.remove() for plot in plots[episode]]
+            del plots[episode]
+
+        episode_plots = []
+        episodes_serices = final_df['Episode']
+        episode_indexes = episodes_serices[episodes_serices == float(episode)]
+        episode_start = episode_indexes.index[0]
+        episode_end = episode_indexes.index[-1]
+
+        # plot = ax.plot(final_df.loc[episode_indexes.index, 'c1'], final_df.loc[episode_indexes.index, 'c2'], lw=0.2)
+        # episode_plots.append(plot)
+        goal_starts_i = bisect.bisect_left(goal_starts, episode_start)
+        while goal_starts[goal_starts_i] < episode_end:
+            start_i = goal_starts[goal_starts_i]
+            end_i = goal_starts[goal_starts_i+1] + 1
+            color = cmap(float(final_df['Goal'][start_i]) / num_goals)
+            episode_plots.extend( ax.plot(final_df['c1'][start_i:end_i], final_df['c2'][start_i:end_i], lw=0.5, c=color))
+            goal_starts_i += 1
+
+        plots[episode] = episode_plots
+        # scatter.set_offsets(pd.concat([final_df.loc[epoch_indeces, 'c1'], final_df.loc[epoch_indeces, 'c2']], axis=1))
+        # scatter.set_array(final_df.loc[epoch_indeces, 'Goal'])
+
+    anim = FuncAnimation(fig, animate, init_func=init, interval=5000, frames=num_episodes)
     plt.show()
 
 def get_datasets(logdir, condition=None, filename='progress.txt'):
