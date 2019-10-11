@@ -65,7 +65,7 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
 def plot_pca(df):
 
-    visible = 1
+    visible = 10
     features = ['Observations0', 'Observations1', 'Observations2', 'Actions0']
 
     x = df.loc[:, features].values
@@ -97,7 +97,6 @@ def plot_pca(df):
         ax.set_title('Goals mapped over Action/Observation space')
 
     def animate(episode):
-        print(episode)
         ax.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
 
         to_remove = episode - visible if episode >= visible else (episode - visible + num_episodes)
@@ -128,7 +127,7 @@ def plot_pca(df):
         # scatter.set_offsets(pd.concat([final_df.loc[epoch_indeces, 'c1'], final_df.loc[epoch_indeces, 'c2']], axis=1))
         # scatter.set_array(final_df.loc[epoch_indeces, 'Goal'])
 
-    anim = FuncAnimation(fig, animate, init_func=init, interval=5000, frames=num_episodes)
+    anim = FuncAnimation(fig, animate, init_func=init, interval=100, frames=num_episodes)
     plt.show()
 
 def get_datasets(logdir, condition=None, filename='progress.txt'):
