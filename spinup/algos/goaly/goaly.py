@@ -87,19 +87,21 @@ class ObservationsActionsAndGoalsBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, obs_dim, act_dim, size):
+    def __init__(self, obs_dim, goal_octaves, act_dim, size):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.goals_buf = np.zeros(size , dtype=np.float32)
+        self.goal_discounts_buf = np.zeros(core.combined_shape(size, goal_octaves), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.ptr, self.max_size = 0, size
 
-    def store(self, obs, goal, act):
+    def store(self, obs, goal, goal_discounts, act):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
         self.goals_buf[self.ptr] = goal
+        self.goal_discounts_buf[self.ptr] = goal_discounts
         self.act_buf[self.ptr] = act
         self.ptr += 1
 
@@ -109,11 +111,16 @@ class ObservationsActionsAndGoalsBuffer:
         the buffer, with advantages appropriately normalized (shifted to have
         mean zero and std one). Also, resets some pointers in the buffer.
         """
-        assert self.ptr == self.max_size    # buffer has to be full before you can get
+
+        if self.ptr == self.max_size:
+            to_return = [self.obs_buf, self.goals_buf, self.goal_discounts_buf, self.act_buf]
+        else:
+            to_return = [self.obs_buf[:self.ptr], self.goals_buf[:self.ptr], self.goal_discounts_buf[:self.ptr], self.act_buf[:self.ptr]]
+
         if reset:
             self.ptr = 0
-        # the next two lines implement the advantage normalization trick
-        return [self.obs_buf, self.goals_buf, self.act_buf]
+
+        return to_return
 
     def is_full(self):
         return self.ptr == self.max_size
@@ -124,7 +131,7 @@ class ObservationsActionsAndGoalsBuffer:
         buffer, with the new data.
         """
 
-        new_obs, new_goals, new_act = buffer.get(reset=False)
+        new_obs, new_goals, new_goal_discounts, new_act = buffer.get(reset=False)
         buf_len = len(new_obs)
 
         for i in range(buf_len):
@@ -135,6 +142,7 @@ class ObservationsActionsAndGoalsBuffer:
                 self.ptr += 1
 
             self.obs_buf[insert_at] = new_obs[i]
+            self.goal_discounts_buf[insert_at] = new_goal_discounts[i]
             self.goals_buf[insert_at] = new_goals[i]
             self.act_buf[insert_at] = new_act[i]
 
@@ -255,13 +263,17 @@ def goaly(
     goals_logp_old_ph = core.placeholder(None, "goals_logp_old_ph")
 
     num_goals = 2**goal_octaves
-    goal_discounts = np.full((goal_octaves), 0.5)
     goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
+    # Goal discounts are updated after every step (outside the model), based on the goal chosen by goal policy.
+    # goal_discounts holds current values, goal_discounts_ph is used to feed current value to the policy model,
+    # which allows goals policy to account for current goal habituation
+    goal_discounts = np.full((goal_octaves), 0.5)
+    goal_discounts_ph = tf.placeholder(dtype=tf.float32, shape=(None, goal_octaves), name="goal_discounts_ph")
 
     # Main outputs from computation graph
     with tf.variable_scope('goals'):
         goals_pi, goals_logp, goals_logp_pi, goals_v = actor_critic(
-            x_ph, None, goals_ph, action_space=Discrete(num_goals), **ac_kwargs)
+            x_ph, goal_discounts_ph, goals_ph, action_space=Discrete(num_goals), **ac_kwargs)
 
     with tf.variable_scope('actions'):
         goals_pi_actions_input = tf.one_hot(goals_pi, num_goals)
@@ -272,8 +284,8 @@ def goaly(
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
-    trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, local_steps_per_epoch)
-    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, local_steps_per_epoch*10)
+    trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch)
+    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*10)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -315,9 +327,9 @@ def goaly(
         actions_adv_ph, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
     # goaly reward
-    #stability_reward = 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+    stability_reward = 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
     # debug: stability from actions only
-    stability_reward =  - inverse_action_error
+    # stability_reward =  - inverse_action_error
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
@@ -338,14 +350,13 @@ def goaly(
     def update():
         # Train inverse
         inverse_buf.append(trajectory_buf)
-        inverse_input_buf = inverse_buf if inverse_buf.is_full() else trajectory_buf
-        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, a_ph], inverse_input_buf.get(reset=False))}
+        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, a_ph], inverse_buf.get(reset=False))}
         inverse_loss_old  = sess.run([inverse_loss], feed_dict=inverse_inputs)
         for _ in range(train_inverse_iters):
             sess.run(train_inverse, feed_dict=inverse_inputs)
 
         # Prepare PPO training inputs
-        inputs = {k:v for k,v in zip([x_ph, goals_ph, a_ph], trajectory_buf.get())}
+        inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, a_ph], trajectory_buf.get())}
         inputs.update({k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_buf.get())})
         inputs.update({k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_buf.get())})
 
@@ -415,13 +426,13 @@ def goaly(
             # Every step, get: action, value, and logprob
             goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = \
                 sess.run([goals_pi, goals_v, goals_logp_pi, actions_pi, actions_v, actions_logp_pi],
-                         feed_dict={x_ph: observations.reshape(1,-1)})
+                         feed_dict={x_ph: observations.reshape(1,-1), goal_discounts_ph: goal_discounts.reshape(1,-1) })
 
             # save and log
-            trajectory_buf.store(observations, goal, actions)
+            trajectory_buf.store(observations, goal, goal_discounts, actions)
             # debug: no external reward
-            goals_ppo_buf.store(discounted_stability, goals_v_t, goals_logp_t)
-            #goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
+            # goals_ppo_buf.store(discounted_stability, goals_v_t, goals_logp_t)
+            goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
             actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
             # logger.store(ActionsVVals=actions_v_t)
             # logger.store(GoalsVVals=goals_v_t)
@@ -451,9 +462,9 @@ def goaly(
             core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
             goal_discount = core.get_goal_discount(goal_discounts, goal)
             logger.store(GoalDiscount=goal_discount)
-            # discounted_stability = goal_discount * stability
+            discounted_stability = goal_discount * stability
             # debug: don't dicsocunt stability
-            discounted_stability = stability
+            # discounted_stability = stability
 
             ep_ret += reward
             ep_len += 1
