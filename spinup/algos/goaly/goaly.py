@@ -158,7 +158,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=2, goal_error_base=0.1, goal_discount_rate=1e-2,
+        goal_octaves=5, goal_error_base=0.1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -304,7 +304,7 @@ def goaly(
     inverse_loss = inverse_action_loss + inverse_goal_loss
 
     # Errors used for calculating return after each step.
-    inverse_action_error = tf.reduce_mean(inverse_action_diff, 1)
+    inverse_action_error = tf.reduce_mean(inverse_action_diff)
     inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
 
     def ppo_objectives(adv_ph, ret_ph, logp, logp_old_ph, clip_ratio):
@@ -313,8 +313,8 @@ def goaly(
         pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
         v_loss = tf.reduce_mean((ret_ph - actions_v)**2)
 
-        approx_kl = tf.reduce_mean(actions_logp_old_ph - actions_logp)      # a sample estimate for KL-divergence, easy to compute
-        approx_ent = tf.reduce_mean(-actions_logp)                  # a sample estimate for entropy, also easy to compute
+        approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
+        approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
         clipped = tf.logical_or(ratio > (1+clip_ratio), ratio < (1-clip_ratio))
         clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
 
@@ -327,7 +327,7 @@ def goaly(
         actions_adv_ph, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
     # goaly reward
-    stability_reward = 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+    stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
     # debug: stability from actions only
     # stability_reward =  - inverse_action_error
 
@@ -373,7 +373,7 @@ def goaly(
         # Train goals
         goals_pi_l_old, goals_v_l_old, goals_ent = sess.run([goals_pi_loss, goals_v_loss, goals_approx_ent], feed_dict=inputs)
         stop_iter = train_ppo(train_goals_pi_iters, train_goals_pi, goals_approx_kl, goals_target_kl)
-        # logger.store(GoalsStopIter=stop_iter)
+        logger.store(GoalsStopIter=stop_iter)
 
         for _ in range(train_goals_v_iters):
             sess.run(train_goals_v, feed_dict=inputs)
@@ -381,7 +381,7 @@ def goaly(
         # Train actions
         actions_pi_l_old, actions_v_l_old, actions_ent = sess.run([actions_pi_loss, actions_v_loss, actions_approx_ent], feed_dict=inputs)
         stop_iter = train_ppo(train_actions_pi_iters, train_actions_pi, actions_approx_kl, actions_target_kl)
-        # logger.store(ActionsStopIter=stop_iter)
+        logger.store(ActionsStopIter=stop_iter)
 
         for _ in range(train_actions_v_iters):
             sess.run(train_actions_v, feed_dict=inputs)
@@ -398,18 +398,18 @@ def goaly(
 
         logger.store(LossActionsPi=actions_pi_l_old)
         logger.store(LossActionsV=actions_v_l_old)
-        # logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
-        # logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
-        # logger.store(ActionsKL=actions_kl)
-        # logger.store(ActionsEntropy=actions_ent)
-        # logger.store(ActionsClipFrac=actions_cf)
+        logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
+        logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
+        logger.store(ActionsKL=actions_kl)
+        logger.store(ActionsEntropy=actions_ent)
+        logger.store(ActionsClipFrac=actions_cf)
         logger.store(LossGoalsPi=goals_pi_l_old)
         logger.store(LossGoalsV=goals_v_l_old)
-        # logger.store(DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old))
-        # logger.store(DeltaLossGoalsV=(goals_v_l_new - goals_v_l_old))
-        # logger.store(GoalsKL=goals_kl)
-        # logger.store(GoalsEntropy=goals_ent)
-        # logger.store(GoalsClipFrac=goals_cf)
+        logger.store(DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old))
+        logger.store(DeltaLossGoalsV=(goals_v_l_new - goals_v_l_old))
+        logger.store(GoalsKL=goals_kl)
+        logger.store(GoalsEntropy=goals_ent)
+        logger.store(GoalsClipFrac=goals_cf)
         logger.store(LossInverse=inverse_loss_old)
         logger.store(DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
 
@@ -430,12 +430,12 @@ def goaly(
 
             # save and log
             trajectory_buf.store(observations, goal, goal_discounts, actions)
-            # debug: no external reward
-            # goals_ppo_buf.store(discounted_stability, goals_v_t, goals_logp_t)
+            # debug: no stability reward
+            # goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
             goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
             actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
-            # logger.store(ActionsVVals=actions_v_t)
-            # logger.store(GoalsVVals=goals_v_t)
+            logger.store(ActionsVVals=actions_v_t)
+            logger.store(GoalsVVals=goals_v_t)
             logger.store(Goal=goal)
 
             goal_logger.log_tabular('Epoch', epoch)
@@ -454,9 +454,8 @@ def goaly(
             stability, goal_error, action_error = \
                 sess.run([stability_reward, inverse_action_error, inverse_goal_error],
                           feed_dict={x_ph: x, a_ph: np.array([actions[0], actions[0]]), goals_ph: np.array([goal[0], goal[0]])})
-            stability = stability[0]
             observations = new_observations
-            logger.store(StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
+            logger.store(ExternalReward=reward, StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
 
             # Calculate goal reward
             core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
@@ -494,8 +493,9 @@ def goaly(
 
         # Log info about epoch
         logger.log_tabular('Epoch', epoch)
-        logger.log_tabular('EpRet', with_min_and_max=True)
+        logger.log_tabular('EpRet')
         logger.log_tabular('EpLen', average_only=True)
+        logger.log_tabular('ExternalReward', average_only=True)
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
@@ -505,20 +505,20 @@ def goaly(
         # logger.log_tabular('DeltaLossGoalsPi', average_only=True)
         logger.log_tabular('LossGoalsV', average_only=True)
         # logger.log_tabular('DeltaLossGoalsV', average_only=True)
-        # logger.log_tabular('GoalsVVals', with_min_and_max=True)
-        # logger.log_tabular('GoalsEntropy', average_only=True)
-        # logger.log_tabular('GoalsKL', average_only=True)
-        # logger.log_tabular('GoalsClipFrac', average_only=True)
-        # logger.log_tabular('GoalsStopIter', average_only=True)
+        logger.log_tabular('GoalsVVals', with_min_and_max=True)
+        logger.log_tabular('GoalsEntropy', average_only=True)
+        logger.log_tabular('GoalsKL', average_only=True)
+        logger.log_tabular('GoalsClipFrac', average_only=True)
+        logger.log_tabular('GoalsStopIter', average_only=True)
         logger.log_tabular('LossActionsPi', average_only=True)
         # logger.log_tabular('DeltaLossActionsPi', average_only=True)
         logger.log_tabular('LossActionsV', average_only=True)
         # logger.log_tabular('DeltaLossActionsV', average_only=True)
-        # logger.log_tabular('ActionsVVals', with_min_and_max=True)
-        # logger.log_tabular('ActionsEntropy', average_only=True)
-        # logger.log_tabular('ActionsKL', average_only=True)
-        # logger.log_tabular('ActionsClipFrac', average_only=True)
-        # logger.log_tabular('ActionsStopIter', average_only=True)
+        logger.log_tabular('ActionsVVals', with_min_and_max=True)
+        logger.log_tabular('ActionsEntropy', average_only=True)
+        logger.log_tabular('ActionsKL', average_only=True)
+        logger.log_tabular('ActionsClipFrac', average_only=True)
+        logger.log_tabular('ActionsStopIter', average_only=True)
         logger.log_tabular('LossInverse', average_only=True)
         # logger.log_tabular('DeltaLossInverse', average_only=True)
         logger.log_tabular('Time', time.time()-start_time)
