@@ -66,24 +66,30 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 def plot_pca(df):
 
     visible = 10
-    features = ['Observations0', 'Observations1', 'Observations2', 'Actions0']
 
-    x = df.loc[:, features].values
+    observation_features = ['Observations0', 'Observations1', 'Observations2']
+
+    #
+    observations_components = df.loc[:, observation_features].values
     y = df.loc[:,['Goal']].values
     num_epochs = df['Epoch'].max()
     num_episodes = df['Episode'].max()
 
-    x = StandardScaler().fit_transform(x)
-    pca = PCA(n_components=2)
-    principal_components = pca.fit_transform(x)
-    principal_df = pd.DataFrame(data = principal_components, columns = ['c1', 'c2'])
-    final_df = pd.concat([principal_df, df[['Goal']], df[['Epoch']], df[['Episode']]], axis = 1)
+    observations_components = StandardScaler().fit_transform(observations_components)
+    pca = PCA(n_components=1)
+    observations_principal_components = pca.fit_transform(observations_components)
+    observations_principal_df = pd.DataFrame(data = observations_principal_components, columns = ['c1'])
+    final_df = pd.concat([observations_principal_df, df[['Actions0']], df[['Goal']], df[['Epoch']], df[['Episode']]], axis = 1)
+    # final_df = df
+
+    observations = final_df['c1']
+    actions = final_df['Actions0']
 
     goals_series = df['Goal']
     goal_starts = goals_series.loc[goals_series.shift() != goals_series].index
 
     fig = plt.figure(figsize = (8,8))
-    ax = plt.axes(xlim=(final_df['c1'].min(), final_df['c1'].max()), ylim=(final_df['c2'].min(), final_df['c2'].max()))
+    ax = plt.axes(xlim=(observations.min(), observations.max()), ylim=(actions.min(), actions.max()))
     ax.grid()
     ax.set_title('Goals mapped over Action/Observation space', fontsize = 10)
     num_goals = final_df['Goal'].max()
@@ -92,7 +98,7 @@ def plot_pca(df):
     # scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
 
     plots = {}
-    cmap = cm.get_cmap('bwr')
+    cmap = cm.get_cmap('Spectral')
     def init():
         ax.set_title('Goals mapped over Action/Observation space')
 
@@ -120,7 +126,7 @@ def plot_pca(df):
             start_i = goal_starts[goal_starts_i]
             end_i = goal_starts[goal_starts_i+1] + 1
             color = cmap(float(final_df['Goal'][start_i]) / num_goals)
-            episode_plots.extend( ax.plot(final_df['c1'][start_i:end_i], final_df['c2'][start_i:end_i], lw=0.5, c=color))
+            episode_plots.extend( ax.plot(observations[start_i:end_i], actions[start_i:end_i], lw=0.5, c=color))
             goal_starts_i += 1
 
         plots[episode] = episode_plots
