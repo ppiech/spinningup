@@ -248,7 +248,7 @@ class Logger:
                     valstr = "%8.3g"%val if hasattr(val, "__float__") else val
                     print(fmt%(key, valstr))
             if not file_only:
-                print("-"*n_slashes) 
+                print("-"*n_slashes)
             if self.output_file is not None:
                 if self.first_row:
                     self.output_file.write("\t".join(self.log_headers)+"\n")
@@ -331,7 +331,7 @@ class EpochLogger(Logger):
         """
         if val is not None:
             super().log_tabular(key,val)
-        elif key in self.epoch_dict.keys():
+        elif key in self.epoch_dict.keys() and len(self.epoch_dict[key]) > 0:
             v = self.epoch_dict[key]
             vals = np.concatenate(v) if isinstance(v[0], np.ndarray) and len(v[0].shape)>0 else v
             stats = mpi_statistics_scalar(vals, with_min_and_max=with_min_and_max)

@@ -158,7 +158,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=5, goal_error_base=0.1, goal_discount_rate=1e-2,
+        goal_octaves=3, goal_error_base=0.1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -444,10 +444,13 @@ def goaly(
                 goal_logger.log_tabular('Observations{}'.format(i), observations[i])
             for i in range(0, len(actions[0])):
                 goal_logger.log_tabular('Actions{}'.format(i), actions[0][i])
-            goal_logger.log_tabular('Goal', goal[0])
+            goal_logger.log_tabular('Reward', reward)
+            goal_logger.log_tabular('Goal', goal)
             goal_logger.dump_tabular(file_only=True)
 
             new_observations, reward, done, _ = env.step(actions[0])
+
+            logger.storeOne("Goal{}Reward".format(goal[0]), reward)
 
             # Calculate stability reward
             x = np.array([observations, new_observations])
@@ -496,6 +499,8 @@ def goaly(
         logger.log_tabular('EpRet')
         logger.log_tabular('EpLen', average_only=True)
         logger.log_tabular('ExternalReward', average_only=True)
+        for i in range(num_goals):
+            logger.log_tabular("Goal{}Reward".format(i), average_only=True)
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
