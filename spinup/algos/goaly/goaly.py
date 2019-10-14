@@ -445,7 +445,7 @@ def goaly(
             for i in range(0, len(actions[0])):
                 goal_logger.log_tabular('Actions{}'.format(i), actions[0][i])
             goal_logger.log_tabular('Reward', reward)
-            goal_logger.log_tabular('Goal', goal)
+            goal_logger.log_tabular('Goal', goal[0])
             goal_logger.dump_tabular(file_only=True)
 
             new_observations, reward, done, _ = env.step(actions[0])

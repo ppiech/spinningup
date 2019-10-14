@@ -9,7 +9,7 @@ import numpy as np
 # pca
 import matplotlib.cm as cm
 from matplotlib.animation import FuncAnimation
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.decomposition import PCA
 import bisect
 
@@ -63,15 +63,12 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
     plt.tight_layout(pad=0.5)
 
-def plot_pca(df):
-
-    visible = 10
+def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=20, line_traces=False):
 
     observation_features = ['Observations0', 'Observations1', 'Observations2']
 
     #
     observations_components = df.loc[:, observation_features].values
-    y = df.loc[:,['Goal']].values
     num_epochs = df['Epoch'].max()
     num_episodes = df['Episode'].max()
 
@@ -85,27 +82,35 @@ def plot_pca(df):
     observations = final_df['c1']
     actions = final_df['Actions0']
 
-    goals_series = df['Goal']
-    goal_starts = goals_series.loc[goals_series.shift() != goals_series].index
+    goals = df.loc[:,['Goal']].values.flatten()
+    rewards = MinMaxScaler((.2, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
 
-    fig = plt.figure(figsize = (8,8))
-    ax = plt.axes(xlim=(observations.min(), observations.max()), ylim=(actions.min(), actions.max()))
-    ax.grid()
-    ax.set_title('Goals mapped over Action/Observation space', fontsize = 10)
+    goals_series = df['Goal']
+    goals_runs_starts = goals_series.loc[goals_series.shift() != goals_series].index
+
+    #  Create subplots
+    fig, (ax_bars, ax_traces) = plt.subplots(1, 2, figsize = (14,7))
+
+    # Traces
+    ax_traces.set_title('Goals mapped over Action/Observation space', fontsize = 10)
+    ax_traces.xlim=(observations.min(), observations.max())
+    ax_traces.ylim=(actions.min(), actions.max())
+    ax_traces.grid()
+
+    # Useful values
     num_goals = final_df['Goal'].max()
-    goals = range(num_goals)
 
     # scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
 
     plots = {}
-    cmap = cm.get_cmap('Spectral')
+
     def init():
-        ax.set_title('Goals mapped over Action/Observation space')
+        ax_traces.set_title('Goals mapped over Action/Observation space')
 
     def animate(episode):
-        ax.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
+        ax_traces.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
 
-        to_remove = episode - visible if episode >= visible else (episode - visible + num_episodes)
+        to_remove = episode - num_visible_episodes if episode >= num_visible_episodes else (episode - num_visible_episodes + num_episodes)
         if to_remove in plots:
             [plot.remove() for plot in plots[to_remove]]
             del plots[to_remove]
@@ -113,25 +118,50 @@ def plot_pca(df):
             [plot.remove() for plot in plots[episode]]
             del plots[episode]
 
-        episode_plots = []
         episodes_serices = final_df['Episode']
         episode_indexes = episodes_serices[episodes_serices == float(episode)]
         episode_start = episode_indexes.index[0]
         episode_end = episode_indexes.index[-1]
 
+        # scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
         # plot = ax.plot(final_df.loc[episode_indexes.index, 'c1'], final_df.loc[episode_indexes.index, 'c2'], lw=0.2)
         # episode_plots.append(plot)
-        goal_starts_i = bisect.bisect_left(goal_starts, episode_start)
-        while goal_starts[goal_starts_i] < episode_end:
-            start_i = goal_starts[goal_starts_i]
-            end_i = goal_starts[goal_starts_i+1] + 1
-            color = cmap(float(final_df['Goal'][start_i]) / num_goals)
-            episode_plots.extend( ax.plot(observations[start_i:end_i], actions[start_i:end_i], lw=0.5, c=color))
-            goal_starts_i += 1
 
-        plots[episode] = episode_plots
+        if line_traces:
+            plots[episode] = plot_line_traces(episode_start, episode_end)
+        else:
+            plots[episode] = plot_sccatter_traces(episode_start, episode_end)
+
+        # plots[episode] = plot_line_traces(episode_start, episode_end)
+
+
         # scatter.set_offsets(pd.concat([final_df.loc[epoch_indeces, 'c1'], final_df.loc[epoch_indeces, 'c2']], axis=1))
         # scatter.set_array(final_df.loc[epoch_indeces, 'Goal'])
+
+    def plot_line_traces(start, end):
+        episode_plots = []
+        goal_start_i = bisect.bisect_left(goals_runs_starts, start)
+
+        while goals_runs_starts[goal_start_i] < end:
+            start_i = goals_runs_starts[goal_start_i]
+            end_i = goals_runs_starts[goal_start_i+1] + 1
+            color = colromap(float(final_df['Goal'][start_i]) / num_goals)
+            episode_plots.extend( ax.plot(observations[start_i:end_i], actions[start_i:end_i], lw=0.5, c=color))
+            goal_start_i += 1
+
+        return episode_plots
+
+    def plot_sccatter_traces(start, end):
+        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals[start:end], s=rewards[start:end],
+                                    cmap=colormap, marker='o')
+
+        return [scatter]
+        # plot = ax.plot(final_df.loc[episode_indexes.index, 'c1'], final_df.loc[episode_indexes.index, 'c2'], lw=0.2)
+
+        # episode_plots.append(plot)
+        # scatter.set_offsets(pd.concat([final_df.loc[epoch_indeces, 'c1'], final_df.loc[epoch_indeces, 'c2']], axis=1))
+        # scatter.set_array(final_df.loc[epoch_indeces, 'Goal'])
+
 
     anim = FuncAnimation(fig, animate, init_func=init, interval=100, frames=num_episodes)
     plt.show()
