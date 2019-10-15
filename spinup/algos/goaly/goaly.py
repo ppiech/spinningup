@@ -415,7 +415,7 @@ def goaly(
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-    stability, discounted_stability = 0, 0
+    goal, stability, discounted_stability = 0, 0, 0
 
     ep_obs = [[]]
     episode = 0
@@ -472,11 +472,16 @@ def goaly(
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
             # Every step, get: action, value, and logprob
-            goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = \
+            new_goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = \
                 sess.run([goals_pi, goals_v, goals_logp_pi, actions_pi, actions_v, actions_logp_pi],
                          feed_dict={x_ph: observations.reshape(1,-1), goal_discounts_ph: goal_discounts.reshape(1,-1) })
             actions = actions[0]
-            goal = goal[0]
+
+            # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
+            # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
+            if new_goal[0] != goal:
+                goals_ppo_buf.finish_path()
+                goal = new_goal[0]
 
             store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t)
             log_trace_step(epoch, episode, observations, actions, goal, reward)
