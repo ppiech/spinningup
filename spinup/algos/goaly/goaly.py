@@ -302,6 +302,8 @@ def goaly(
     # known move the goal towards the new goal by a small amount
     inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2) * (inverse_action_diff + goal_error_base))
     inverse_loss = inverse_action_loss + inverse_goal_loss
+    # debug: isolate goal loss
+    # inverse_loss = inverse_action_loss# + inverse_goal_loss
 
     # Errors used for calculating return after each step.
     inverse_action_error = tf.reduce_mean(inverse_action_diff)
@@ -443,7 +445,7 @@ def goaly(
 
     def calculate_stability(observations, new_observations, actions, goal):
         x = np.array([observations, new_observations])
-        stability, goal_error, action_error = \
+        stability, action_error, goal_error = \
             sess.run([stability_reward, inverse_action_error, inverse_goal_error],
                       feed_dict={x_ph: x, a_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
         logger.store(ExternalReward=reward, StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
