@@ -158,7 +158,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=3, goal_error_base=0.1, goal_discount_rate=1e-2,
+        goal_octaves=3, goal_error_base=1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -292,18 +292,18 @@ def goaly(
     logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
     # Inverse Dynamics Model
-    a_inverse, goals_inverse, a_predicted, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
+    a_inverse, goals_inverse, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
     inverse_action_diff = tf.abs((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)
-    inverse_action_loss = tf.reduce_mean(inverse_action_diff**2) # For training inverse model
-    inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted, tf.float32) / num_goals)
+    inverse_action_loss = tf.reduce_mean(inverse_action_diff**2, name='inverse_action_loss') # For training inverse model
+    inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals)
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
-    inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2) * (inverse_action_diff + goal_error_base))
+    inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2) * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
     inverse_loss = inverse_action_loss + inverse_goal_loss
     # debug: isolate goal loss
-    # inverse_loss = inverse_action_loss# + inverse_goal_loss
+    # inverse_loss = inverse_goal_loss
 
     # Errors used for calculating return after each step.
     inverse_action_error = tf.reduce_mean(inverse_action_diff)
@@ -422,7 +422,7 @@ def goaly(
     ep_obs = [[]]
     episode = 0
 
-    def store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t):
+    def store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, discounted_stability):
         trajectory_buf.store(observations, goal, goal_discounts, actions)
         # debug: no stability reward
         # goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
@@ -485,7 +485,7 @@ def goaly(
                 goals_ppo_buf.finish_path()
                 goal = new_goal[0]
 
-            store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t)
+            store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, discounted_stability)
             log_trace_step(epoch, episode, observations, actions, goal, reward)
 
             new_observations, reward, done, _ = env.step(actions)
