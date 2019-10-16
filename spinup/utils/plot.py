@@ -202,7 +202,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=6, line_
         return plots
 
     def goal_color(goal):
-        return colormap(float(goal / num_goals))
+        return colormap(float(goal / (num_goals - 1)))
 
     fig.canvas.mpl_connect('key_press_event', onKey)
     anim = FuncAnimation(fig, animate, init_func=init, interval=100, frames=sys.maxsize)
