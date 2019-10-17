@@ -66,8 +66,9 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
 animation_control = 'go'
 animation_offset = 0
+animation_direction = 'right'
 
-def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=6, line_traces=False):
+def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=1, line_traces=False):
 
     observation_features = ['Observations0', 'Observations1', 'Observations2']
 
@@ -116,7 +117,8 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=6, line_
         global animation_offset
         global animation_control
         if animation_control == 'stop' and event.key in ['left', 'right']:
-            animation_offset += 1 if event.key == 'left' else -1
+            animation_direction = event.key
+            animation_offset += 1 if animation_direction == 'left' else -1
         if event.key == ' ':
             animation_control = 'stop' if animation_control == 'go' else 'go'
 
@@ -158,7 +160,11 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=6, line_
         return start, end, end - start
 
     def remove_old_plots(episode):
-        to_remove = episode - num_visible_episodes if episode >= num_visible_episodes else (episode - num_visible_episodes + num_episodes)
+        if animation_direction == 'right':
+            to_remove = episode - num_visible_episodes if episode >= num_visible_episodes else (episode - num_visible_episodes + num_episodes)
+        else:
+            to_remove = episode + 1
+
         if to_remove in plots:
             [plot.remove() for plot in plots[to_remove]]
             del plots[to_remove]
@@ -182,7 +188,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=6, line_
 
     def plot_sccatter_traces(start, end):
         scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals[start:end], s=rewards[start:end],
-                                    cmap=colormap, marker='o')
+                                    cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
         return [scatter]
 
     def plot_reward_bars(start, end):
