@@ -161,14 +161,14 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=5, goal_error_base=1, goal_discount_rate=1e-2,
+        goal_octaves=5, goal_error_base=1, goal_discount_rate=0.1,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        train_inverse_iters=10, inverse_lr=1e-2,
+        train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0):
     """
@@ -297,13 +297,16 @@ def goaly(
     # Inverse Dynamics Model
     a_inverse, goals_inverse, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
-    inverse_action_diff = tf.abs((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range)
+    inverse_action_diff = tf.abs((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range, name='inverse_action_diff')
     inverse_action_loss = tf.reduce_mean(inverse_action_diff**2, name='inverse_action_loss') # For training inverse model
-    inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals)
+    inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals, name='inverse_goal_diff')
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
-    inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2) * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
+    if isinstance(env.action_space, Discrete):
+        inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
+    print(inverse_action_diff)
+    inverse_goal_loss = tf.reduce_mean(inverse_goal_diff**2 * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
     # inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2), name='inverse_goal_loss')
     inverse_loss = inverse_action_loss + inverse_goal_loss
     # debug: isolate goal loss
@@ -441,10 +444,14 @@ def goaly(
         goal_logger.log_tabular('Episode', episode)
         for i in range(0, len(observations)):
             goal_logger.log_tabular('Observations{}'.format(i), observations[i])
-        for i in range(0, len(actions)):
-            goal_logger.log_tabular('Actions{}'.format(i), actions[i])
+        if isinstance(env.action_space, Discrete):
+            goal_logger.log_tabular('Actions0'.format(i), actions)
+        else:
+            for i in range(0, len(actions)):
+                goal_logger.log_tabular('Actions{}'.format(i), actions[i])
         goal_logger.log_tabular('Reward', reward)
         goal_logger.log_tabular('Goal', goal)
+
         goal_logger.dump_tabular(file_only=True)
 
     def calculate_stability(observations, new_observations, actions, goal):
@@ -466,7 +473,7 @@ def goaly(
                 last_action_val = action_reward(reward, goal_discount, stability)
                 last_goal_val = goal_reward(reward, goal_discount, stability)
             else:
-                last_action_val, last_goals_val = sess.run(actions_v, goals_v, feed_dict={x_ph: observations.reshape(1,-1)})
+                last_action_val, last_goal_val = sess.run([actions_v, goals_v], feed_dict={x_ph: observations.reshape(1,-1)})
 
             actions_ppo_buf.finish_path(last_action_val)
             goals_ppo_buf.finish_path(last_goal_val)
@@ -486,9 +493,9 @@ def goaly(
         return r
 
     def goal_reward(reward, goal_discount, stability):
-        # debug: no external reward
-        # reward = goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
-        r = reward goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
+        # debug: no goal length reward
+        r = goal_discount * stability
+        # r = reward + goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
         logger.store(GoalsReward=r)
         return r
 
