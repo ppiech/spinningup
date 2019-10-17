@@ -35,9 +35,13 @@ def placeholders_from_env(env):
     actions_ph = placeholder_from_space(env.action_space, "actions")
     return observations_ph, actions_ph
 
-def mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
+def hidden(x, hidden_sizes=(32,), activation=tf.tanh):
     for h in hidden_sizes[:-1]:
         x = tf.layers.dense(x, units=h, activation=activation)
+    return x
+
+def mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
+    x = hidden(x, hidden_sizes=hidden_sizes, activation=activation)
     return tf.layers.dense(x, units=hidden_sizes[-1], activation=output_activation)
 
 def get_vars(scope=''):
@@ -104,7 +108,7 @@ def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation
 Actor-Critics
 """
 def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
-                     output_activation=None, policy=None, action_space=None):
+                     output_activation=None, policy=None, action_space=None, x_value_with_action=False):
 
     # default policy builder depends on action space
     if policy is None and isinstance(action_space, Box):
@@ -115,6 +119,8 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
     with tf.variable_scope('pi'):
         pi, logp, logp_pi = policy(x, goals, a, hidden_sizes, activation, output_activation, action_space)
     with tf.variable_scope('v'):
+        if x_value_with_action:
+            x = tf.concat([x, pi], 1)
         v = tf.squeeze(mlp(x, list(hidden_sizes)+[1], activation, None), axis=1)
     return pi, logp, logp_pi, v
 
@@ -141,24 +147,24 @@ def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=
         a_inverse_dim = np.prod(a_inverse.get_shape().as_list()[1:])
         a_inverse = tf.reshape(a_inverse, [-1, a_inverse_dim])
 
-        output_activation=tf.sigmoid
+        actions_output_activation=tf.sigmoid
     else:
         # Trim the last action from input set
         a_inverse = tf.slice(a, [0, 0], [inverse_input_size - 1] + list(env.action_space.shape))
-        output_activation=None
+        actions_output_activation=None
 
     goals_inverse = tf.slice(goals, [0], [inverse_input_size - 1])
     goals_inverse_input = tf.one_hot(goals_inverse, num_goals)
 
     num_actions = a_inverse.get_shape().as_list()[-1]
 
-    logits = mlp(tf.concat([x_prev, x_inverse], 1), list(hidden_sizes)+[num_actions + num_goals], activation, output_activation)
+    hidden_x = hidden(tf.concat([x_prev, x_inverse], 1), list(hidden_sizes)+[num_actions + num_goals], activation)
+    action_logits = mlp(hidden_x,[num_actions], activation, actions_output_activation)
+    goals_logits = mlp(hidden_x, [num_goals], activation, tf.sigmoid)
 
-    inverse_input_size = tf.shape(x_inverse)[0]
-    action_logits = tf.slice(logits, [0, 0], [inverse_input_size, num_actions])
-    goals_logits = tf.slice(logits, [0, num_actions], [inverse_input_size, num_goals])
     goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
-    return a_inverse, goals_inverse, action_logits, goals_predicted
+
+    return a_inverse, goals_inverse_input, action_logits, goals_logits, goals_predicted
 
 """
 Returns the high-low for action values, used to normalize action error in loss.

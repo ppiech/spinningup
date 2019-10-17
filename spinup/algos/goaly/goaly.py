@@ -38,6 +38,9 @@ class PPOBuffer:
         self.y_logp_buf[self.ptr] = y_logp
         self.ptr += 1
 
+    def path_len(self):
+        return self.ptr - self.path_start_idx
+
     def finish_path(self, last_val=0):
         """
         Call this at the end of a trajectory, or when one gets cut off
@@ -158,7 +161,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=3, goal_error_base=1, goal_discount_rate=1e-2,
+        goal_octaves=5, goal_error_base=1, goal_discount_rate=1e-2,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -301,6 +304,7 @@ def goaly(
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
     inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2) * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
+    # inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2), name='inverse_goal_loss')
     inverse_loss = inverse_action_loss + inverse_goal_loss
     # debug: isolate goal loss
     # inverse_loss = inverse_goal_loss
@@ -417,20 +421,20 @@ def goaly(
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-    goal, stability, discounted_stability = 0, 0, 0
+    goal, stability, goal_discount, discounted_stability = 0, 0, 0, 0
 
     ep_obs = [[]]
     episode = 0
 
-    def store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, discounted_stability):
+    def store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount):
         trajectory_buf.store(observations, goal, goal_discounts, actions)
-        # debug: no stability reward
-        # goals_ppo_buf.store(reward, goals_v_t, goals_logp_t)
-        goals_ppo_buf.store(reward + discounted_stability, goals_v_t, goals_logp_t)
-        actions_ppo_buf.store(stability, actions_v_t, actions_logp_t)
+        goals_ppo_buf.store(goal_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
+        actions_ppo_buf.store(action_reward(reward, goal_discount, stability), actions_v_t, actions_logp_t)
+
         logger.store(ActionsVVals=actions_v_t)
         logger.store(GoalsVVals=goals_v_t)
         logger.store(Goal=goal)
+        logger.store(GoalPathLen=actions_ppo_buf.path_len())
 
     def log_trace_step(epoch, episode, observations, actions, goal, reward):
         goal_logger.log_tabular('Epoch', epoch)
@@ -448,19 +452,24 @@ def goaly(
         stability, action_error, goal_error = \
             sess.run([stability_reward, inverse_action_error, inverse_goal_error],
                       feed_dict={x_ph: x, a_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
-        logger.store(ExternalReward=reward, StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
+        logger.store(StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
         return stability
 
-    def handle_episode_termination(episode, observations, reward, done, ep_ret, ep_len):
+    def handle_episode_termination(episode, observations, reward, done, ep_ret, ep_len, stability, goal_discount):
         terminal = done or (ep_len == max_ep_len)
         if terminal or (t==local_steps_per_epoch-1):
             episode += 1
             if not(terminal):
                 print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
             # if trajectory didn't reach terminal state, bootstrap value target
-            last_val = reward if done else sess.run(actions_v, feed_dict={x_ph: observations.reshape(1,-1)})
-            actions_ppo_buf.finish_path(last_val)
-            goals_ppo_buf.finish_path(last_val)
+            if done:
+                last_action_val = action_reward(reward, goal_discount, stability)
+                last_goal_val = goal_reward(reward, goal_discount, stability)
+            else:
+                last_action_val, last_goals_val = sess.run(actions_v, goals_v, feed_dict={x_ph: observations.reshape(1,-1)})
+
+            actions_ppo_buf.finish_path(last_action_val)
+            goals_ppo_buf.finish_path(last_goal_val)
 
             if terminal:
                 # only save EpRet / EpLen if trajectory finished
@@ -469,6 +478,15 @@ def goaly(
             observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
         return episode, observations, reward, done, ep_ret, ep_len
 
+    def action_reward(reward, goal_discount, stability):
+        # debug: no external reward
+        return stability
+        # return reward + stability
+
+    def goal_reward(reward, goal_discount, stability):
+        # debug: no external reward
+        return goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
+        # return reward + goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
@@ -485,7 +503,7 @@ def goaly(
                 goals_ppo_buf.finish_path()
                 goal = new_goal[0]
 
-            store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, discounted_stability)
+            store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
             log_trace_step(epoch, episode, observations, actions, goal, reward)
 
             new_observations, reward, done, _ = env.step(actions)
@@ -497,7 +515,7 @@ def goaly(
             core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
             goal_discount = core.get_goal_discount(goal_discounts, goal)
             logger.store(GoalDiscount=goal_discount)
-            discounted_stability = goal_discount * stability
+            # discounted_stability = goal_discount * stability
             # debug: don't dicsocunt stability
             # discounted_stability = stability
 
@@ -505,7 +523,7 @@ def goaly(
             ep_len += 1
 
             episode, observations, reward, done, ep_ret, ep_len = \
-                handle_episode_termination(episode, observations, reward, done, ep_ret, ep_len)
+                handle_episode_termination(episode, observations, reward, done, ep_ret, ep_len, stability, goal_discount)
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
@@ -518,7 +536,7 @@ def goaly(
         logger.log_tabular('Epoch', epoch)
         logger.log_tabular('EpRet')
         logger.log_tabular('EpLen', average_only=True)
-        logger.log_tabular('ExternalReward', average_only=True)
+        logger.log_tabular('GoalPathLen', average_only=True)
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
