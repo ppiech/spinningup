@@ -480,12 +480,18 @@ def goaly(
 
     def action_reward(reward, goal_discount, stability):
         # debug: no external reward
-        return stability
-        # return reward + stability
+        # r = stability
+        r = reward + stability
+        logger.store(ActionsReward=r)
+        return r
 
     def goal_reward(reward, goal_discount, stability):
         # debug: no external reward
-        return goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
+        # reward = goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
+        r = reward goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
+        logger.store(GoalsReward=r)
+        return r
+
         # return reward + goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
 
     # Main loop: collect experience in env and update/log each epoch
@@ -541,6 +547,8 @@ def goaly(
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
         logger.log_tabular('GoalDiscount', average_only=True)
+        logger.log_tabular('GoalsReward', average_only=True)
+        logger.log_tabular('ActionsReward', average_only=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossGoalsPi', average_only=True)
         # logger.log_tabular('DeltaLossGoalsPi', average_only=True)

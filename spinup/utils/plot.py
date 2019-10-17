@@ -68,7 +68,7 @@ animation_control = 'go'
 animation_offset = 0
 animation_direction = 'right'
 
-def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=1, line_traces=False):
+def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_traces=False):
 
     observation_features = ['Observations0', 'Observations1', 'Observations2']
 
