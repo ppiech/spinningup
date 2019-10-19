@@ -88,7 +88,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
     actions = final_df['Actions0']
 
     goals = df.loc[:,['Goal']].values.flatten()
-    rewards = MinMaxScaler((.2, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
+    rewards = MinMaxScaler((1, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
 
     goals_series = df['Goal']
     goals_runs_starts = goals_series.loc[goals_series.shift() != goals_series].index
@@ -139,11 +139,8 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
         else:
             plots[episode] = plot_sccatter_traces(episode_start, episode_end)
 
-        # bars.remove()
-        # bars.append(plot_reward_bars(episode_start, episode_end))
-
-        # plots[episode].extend(plot_reward_bars(episode_start, episode_end))
-        plots[episode].extend(plot_rewards(episode_start, episode_end))
+        plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
+        plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
 
         ax_charts.set(xlim=(episode_start - (num_visible_episodes - 1) * episode_len, episode_end))
 
@@ -191,20 +188,15 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
                                     cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
         return [scatter]
 
-    def plot_reward_bars(start, end):
-        ave_rewards = []
-        for goal in range(num_goals):
-            ave_rewards.append( df.iloc[start:end].loc[df['Goal'] == goal]['Reward'].mean(axis=0) )
-
-        return ax_charts.barh(np.arange(num_goals), ave_rewards, align='center')
-
-    def plot_rewards(start, end, offset = 0):
+    def plot_value_over_time(start, end, column_name, offset = 0):
         plots = []
-        for goal in range(num_goals):
-            goal_rewards = df.iloc[start:end].loc[df['Goal'] == goal]['Reward']
-            x = goal_rewards.index - offset
-            y = goal_rewards.values
-            plots.extend(ax_charts.plot(x, y, lw=0, c=goal_color(goal), marker='.'))
+        ep_df = df.iloc[start:end]
+        x = np.arange(start, end)
+        y = ep_df[column_name].values
+
+        plots.extend( ax_charts.plot(x, y, c='gray', lw=0.5) )
+        plots.append( ax_charts.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2) )
+
         return plots
 
     def goal_color(goal):
