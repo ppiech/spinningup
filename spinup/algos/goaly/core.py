@@ -193,12 +193,14 @@ def update_reward_dicscounts(reward_discount, reward, discount_rate):
 
 def get_goal_discount(goal_discounts, goal):
     discount = 0
-    for i in range(0, len(goal_discounts)):
+    num_discounts = len(goal_discounts)
+    for i in range(0, num_discounts):
         if goal & (1 << i):
             octave_discount = goal_discounts[i]
         else:
             octave_discount = 1 - goal_discounts[i]
-        discount += octave_discount / (2**i)
+        # treat all discounts equally in clac:
+        discount += octave_discount / num_discounts
     return discount
 
 def update_goal_discounts(goal_discounts, goal, discount_rate):
