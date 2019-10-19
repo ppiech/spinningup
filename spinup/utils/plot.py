@@ -195,7 +195,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
         y = ep_df[column_name].values
 
         plots.extend( ax_charts.plot(x, y, c='gray', lw=0.5) )
-        plots.append( ax_charts.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2) )
+        plots.append( ax_charts.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2, vmin=0, vmax=(num_goals - 1)) )
 
         return plots
 
