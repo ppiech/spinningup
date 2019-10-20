@@ -3,6 +3,7 @@ import joblib
 import os
 import os.path as osp
 import tensorflow as tf
+import numpy as np
 from spinup import EpochLogger
 from spinup.utils.logx import restore_tf_graph
 
@@ -29,7 +30,7 @@ def load_policy(fpath, itr='last', deterministic=False):
         action_op = model['pi']
 
     # make function for producing an action given a single state
-    get_action = lambda x : sess.run(action_op, feed_dict={model['x']: x[None,:]})[0]
+    get_action = lambda x : sess.run(action_op, feed_dict={model['x']: x[None,:], model['goals_ph']: np.array([5])})[0]
 
     # try to load environment from save
     # (sometimes this will fail because the environment could not be pickled)
