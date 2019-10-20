@@ -140,7 +140,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
             plots[episode] = plot_sccatter_traces(episode_start, episode_end)
 
         plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
-        plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
+        # plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations1'))
 
         ax_charts.set(xlim=(episode_start - (num_visible_episodes - 1) * episode_len, episode_end))
 

@@ -131,7 +131,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu):
+def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,16), activation=tf.nn.relu):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
     x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
@@ -165,6 +165,32 @@ def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=
     goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
 
     return a_inverse, goals_inverse_input, action_logits, goals_logits, goals_predicted
+
+"""
+Forward Dynamics
+"""
+def forward_model(x, a, action_space_shape, is_action_space_discrete, hidden_sizes=(16,), activation=tf.nn.relu):
+    inverse_input_size = tf.shape(x)[0]
+    features_shape = x.shape.as_list()[1:]
+    x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
+    x_next = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
+
+    if is_action_space_discrete:
+        # Trim the last action from input set
+        a_input = tf.slice(a, [0], [inverse_input_size - 1])
+
+        # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
+        # picking a value between two actions (like .5)
+        a_input = tf.one_hot(tf.cast(a_input, tf.int32), 2)
+        a_input_dim = np.prod(a_input.get_shape().as_list()[1:])
+        a_input = tf.reshape(a_input, [-1, a_input_dim])
+    else:
+        # Trim the last action from input set
+        a_input = tf.slice(a, [0, 0], [inverse_input_size - 1] + list(action_space_shape))
+
+    x_predicted = mlp(tf.concat([x_prev, a_input], 1), list(hidden_sizes)+features_shape, activation, None)
+
+    return x_next, x_predicted, a_input
 
 """
 Returns the high-low for action values, used to normalize action error in loss.

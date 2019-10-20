@@ -171,7 +171,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=5, goal_error_base=1, goal_discount_rate=0.1,
+        goal_octaves=3, goal_error_base=1, goal_discount_rate=0.1,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -188,7 +188,7 @@ def goaly(
             The environment must satisfy the OpenAI Gym API.
 
         actor_critic: A function which takes in placeholder symbols
-            for state, ``x_ph``, goals, ``goals_ph``, and action, ``a_ph``, and returns the main
+            for state, ``x_ph`` concatenated with ``goals_ph``, and action, ``a_ph``, and returns the main
             outputs from the agent's Tensorflow computation graph:
 
             ===========  ================  ======================================
@@ -267,7 +267,7 @@ def goaly(
     act_dim = env.action_space.shape
 
     # Inputs to computation graph
-    x_ph, a_ph = core.placeholders_from_env(env)
+    x_ph, actions_ph = core.placeholders_from_env(env)
     actions_adv_ph = core.placeholder(None, "actions_adv_ph")
     actions_ret_ph = core.placeholder(None, "actions_ret_ph")
     actions_logp_old_ph = core.placeholder(None, "actions_logp_old_ph")
@@ -277,11 +277,14 @@ def goaly(
 
     num_goals = 2**goal_octaves
     goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
+
     # Goal discounts are updated after every step (outside the model), based on the goal chosen by goal policy.
     # goal_discounts holds current values, goal_discounts_ph is used to feed current value to the policy model,
     # which allows goals policy to account for current goal habituation
     goal_discounts = np.full((goal_octaves), 0.5)
     goal_discounts_ph = tf.placeholder(dtype=tf.float32, shape=(None, goal_octaves), name="goal_discounts_ph")
+
+    # actions_goal_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="actions_goal_ph")
 
     # Main outputs from computation graph
     with tf.variable_scope('goals'):
@@ -289,25 +292,27 @@ def goaly(
             x_ph, goal_discounts_ph, goals_ph, action_space=Discrete(num_goals), **ac_kwargs)
 
     with tf.variable_scope('actions'):
-        goals_pi_actions_input = tf.one_hot(goals_pi, num_goals)
+        goals_pi_actions_input = tf.one_hot(goals_ph, num_goals)
         actions_pi, actions_logp, actions_logp_pi, actions_v = actor_critic(
-            x_ph, goals_pi_actions_input, a_ph, action_space=env.action_space, **ac_kwargs)
+            x_ph, goals_pi_actions_input, actions_ph, action_space=env.action_space, **ac_kwargs)
 
     # Experience buffer
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
     trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch)
-    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*10)
+    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*5)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
     logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
     # Inverse Dynamics Model
-    a_inverse, goals_inverse, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, a_ph, goals_ph, num_goals)
+    a_inverse, goals_inverse, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, actions_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
-    inverse_action_diff = tf.abs((tf.cast(a_inverse, tf.float32) - a_predicted) / a_range, name='inverse_action_diff')
+    x_range = core.action_range(env.observation_space)
+    a_as_float = tf.cast(a_inverse, tf.float32)
+    inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
     inverse_action_loss = tf.reduce_mean(inverse_action_diff**2, name='inverse_action_loss') # For training inverse model
     inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals, name='inverse_goal_diff')
 
@@ -322,8 +327,16 @@ def goaly(
     # inverse_loss = inverse_goal_loss
 
     # Errors used for calculating return after each step.
-    inverse_action_error = tf.reduce_mean(inverse_action_diff)
+    inverse_action_error = tf.reduce_mean(inverse_action_diff / ((tf.abs(a_as_float + a_predicted)) / a_range))
     inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
+
+    # Forward model
+    is_action_space_discrete = isinstance(env.action_space, Discrete)
+    x_next, x_pred, a_input = core.forward_model(x_ph, actions_ph, env.action_space.shape, is_action_space_discrete)
+
+    forward_diff = tf.abs((tf.cast(x_next, tf.float32) - x_pred) / x_range, name='forward_diff')
+    forward_error = tf.reduce_mean(forward_diff, name="forward_error")
+    forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
 
     def ppo_objectives(adv_ph, ret_ph, logp, logp_old_ph, clip_ratio):
         ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
@@ -346,8 +359,8 @@ def goaly(
 
     # goaly reward
     stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
-    # debug: stability from actions only
-    # stability_reward =  - inverse_goal_error
+    # debug: stability from goals only
+    # stability_reward =  -inverse_goal_error
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
@@ -355,6 +368,7 @@ def goaly(
     train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
     train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
     train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
+    train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(forward_loss)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -363,18 +377,25 @@ def goaly(
     sess.run(sync_all_params())
 
     # Setup model saving
-    logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'actions_pi': actions_pi, 'actions_v': actions_v})
+    logger.setup_tf_saver(sess, inputs={'x': x_ph, 'goals_ph': goals_ph }, \
+                          outputs={'pi': actions_pi, 'v': actions_v})
 
     def update():
-        # Train inverse
+        # Train inverse and forward
         inverse_buf.append(trajectory_buf)
-        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, a_ph], inverse_buf.get(reset=False))}
+        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
         inverse_loss_old  = sess.run([inverse_loss], feed_dict=inverse_inputs)
         for _ in range(train_inverse_iters):
             sess.run(train_inverse, feed_dict=inverse_inputs)
 
+        # Train inverse
+        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
+        forward_loss_old  = sess.run([forward_loss], feed_dict=inverse_inputs)
+        for _ in range(1):
+            sess.run(train_forward, feed_dict=inverse_inputs)
+
         # Prepare PPO training inputs
-        inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, a_ph], trajectory_buf.get())}
+        inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], trajectory_buf.get())}
         inputs.update({k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_buf.get())})
         inputs.update({k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_buf.get())})
 
@@ -407,11 +428,12 @@ def goaly(
         # Log changes from update
         actions_pi_l_new, actions_v_l_new,  actions_kl, actions_cf, \
             goals_pi_l_new, goals_v_l_new, goals_kl, goals_cf, \
-            inverse_loss_new,a_predicted_val, goals_predicted_val = \
+            inverse_loss_new,a_predicted_val, goals_predicted_val, \
+            forward_loss_new = \
             sess.run([
                 actions_pi_loss, actions_v_loss, actions_approx_kl, actions_clipfrac, \
                 goals_pi_loss, goals_v_loss, goals_approx_kl, goals_clipfrac, \
-                inverse_loss, a_predicted, goals_predicted],
+                inverse_loss, a_predicted, goals_predicted, forward_loss],
                 feed_dict=inputs)
 
         logger.store(LossActionsPi=actions_pi_l_old)
@@ -428,8 +450,10 @@ def goaly(
         logger.store(GoalsKL=goals_kl)
         logger.store(GoalsEntropy=goals_ent)
         logger.store(GoalsClipFrac=goals_cf)
-        logger.store(LossInverse=inverse_loss_old)
+        logger.store(LossInverse=inverse_loss_new)
         logger.store(DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
+        logger.store(LossForward=forward_loss_new)
+        logger.store(DeltaLossForward=(forward_loss_new - forward_loss_old))
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -446,6 +470,8 @@ def goaly(
 
         goal_logger.log_tabular('GoalsReward', step_goals_reward)
         goals_ppo_buf.store(reward, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
+        # debug no external reward
+        # goals_ppo_buf.store(0, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
         actions_ppo_buf.store(actions_reward(reward, goal_discount, stability), 0, actions_v_t, actions_logp_t)
 
         logger.store(ActionsVVals=actions_v_t)
@@ -470,10 +496,10 @@ def goaly(
 
     def calculate_stability(observations, new_observations, actions, goal):
         x = np.array([observations, new_observations])
-        stability, action_error, goal_error = \
-            sess.run([stability_reward, inverse_action_error, inverse_goal_error],
-                      feed_dict={x_ph: x, a_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
-        logger.store(StabilityReward=stability, StabilityGoalError=goal_error, StabilityActionError=action_error)
+        stability, action_error, goal_error, forward_prediction_error = \
+            sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error],
+                      feed_dict={x_ph: x, actions_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
+        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPreictionError=forward_prediction_error)
         return stability
 
     def handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len, stability, goal_discount):
@@ -484,7 +510,7 @@ def goaly(
                 print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
             # if trajectory didn't reach terminal state, bootstrap value target
             if done:
-                last_actions_val = actions_reward(reward, goal_discount, stability) + reward
+                last_actions_val = actions_reward(reward, goal_discount, stability)
                 last_goals_val = goals_step_reward(reward, goal_discount, stability) + reward
             else:
                 last_actions_val, last_goals_val = sess.run([actions_v, goals_v], feed_dict={x_ph: observations.reshape(1,-1)})
@@ -509,15 +535,15 @@ def goaly(
 
     def actions_reward(reward, goal_discount, stability):
         # debug: no external reward
-        # r = reward
+        # r = stability
         r = reward + stability
         logger.store(ActionsReward=r)
         return r
 
     def goals_step_reward(reward, goal_discount, stability):
         # debug: no goal length reward
-        r = goal_discount * (actions_ppo_buf.path_len())
-        # r = goal_discount * (stability + actions_ppo_buf.path_len())
+        r = goal_discount * (stability + actions_ppo_buf.path_len())
+        # r = goal_discount * (stability + actions_ppo_buf  .path_len())
         logger.store(GoalsReward=r)
         return r
 
@@ -528,9 +554,15 @@ def goaly(
         for t in range(local_steps_per_epoch):
             # Every step, get: action, value, and logprob
             prev_goal = goal
-            goal, goals_v_t, goals_logp_t, actions, actions_v_t, actions_logp_t = \
-                sess.run([goals_pi, goals_v, goals_logp_pi, actions_pi, actions_v, actions_logp_pi],
+
+            goal, goals_v_t, goals_logp_t = \
+                sess.run([goals_pi, goals_v, goals_logp_pi],
                          feed_dict={x_ph: observations.reshape(1,-1), goal_discounts_ph: goal_discounts.reshape(1,-1) })
+
+            actions, actions_v_t, actions_logp_t = \
+                sess.run([actions_pi, actions_v, actions_logp_pi],
+                         feed_dict={x_ph: observations.reshape(1,-1), goals_ph: goal })
+
             goal = goal[0]
             actions = actions[0]
 
@@ -574,6 +606,7 @@ def goaly(
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
+        logger.log_tabular('ForwardPreictionError', average_only=True)
         logger.log_tabular('GoalDiscount', average_only=True)
         logger.log_tabular('GoalsReward', average_only=True)
         logger.log_tabular('ActionsReward', average_only=True)
@@ -597,7 +630,9 @@ def goaly(
         logger.log_tabular('ActionsClipFrac', average_only=True)
         logger.log_tabular('ActionsStopIter', average_only=True)
         logger.log_tabular('LossInverse', average_only=True)
-        # logger.log_tabular('DeltaLossInverse', average_only=True)
+        logger.log_tabular('DeltaLossInverse', average_only=True)
+        logger.log_tabular('LossForward', average_only=True)
+        logger.log_tabular('DeltaLossForward', average_only=True)
         logger.log_tabular('Time', time.time()-start_time)
         logger.dump_tabular()
 
