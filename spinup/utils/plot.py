@@ -76,6 +76,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
     observations_components = df.loc[:, observation_features].values
     num_epochs = df['Epoch'].max()
     num_episodes = df['Episode'].max()
+    unique_episodes = set(df['Episode'])
 
     observations_components = StandardScaler().fit_transform(observations_components)
     pca = PCA(n_components=1)
@@ -139,21 +140,33 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
         else:
             plots[episode] = plot_sccatter_traces(episode_start, episode_end)
 
-        plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
-        # plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations1'))
+        # plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
+        plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
 
         ax_charts.set(xlim=(episode_start - (num_visible_episodes - 1) * episode_len, episode_end))
 
     def episode_from_step(animation_step):
         global animation_offset
-        if animation_control == 'stop':
-            animation_offset += 1
-        return int((animation_step - animation_offset) % num_episodes)
+        episode = -1
+        while episode < 0:
+            if animation_control == 'stop':
+                animation_offset += 1
+            episode = int((animation_step - animation_offset) % num_episodes)
+            print("next episode = {}".format(episode))
+            if episode not in unique_episodes:
+                animation_offset -= 1
+                episode = -1
 
-    def episode_start_end(episode):
-        start = episode_starts.loc[episode_starts == episode].index[0]
-        end_row = episode_starts.loc[episode_starts == (episode + 1)]
-        end = end_row.index[0] if len(end_row) > 0 else len(df)
+        return episode
+
+    def episode_start_end(episode, num_episodes=1):
+        episode_idxs = episode_starts.loc[episode_starts >= episode]
+        start = episode_idxs.index[0]
+        last_episode_len_idx = num_episodes if num_episodes < len(episode_idxs) else : len(episode_idxs) - 1
+        end = episode_idxs.index[last_episode_len_idx] - 1
+        # end_row = episode_starts.iloc[start:].loc[episode_starts != episode]
+        # end = end_row.index[0] if len(end_row) > 0 else len(df)
+        print("start={}, end={}".format(start, end))
         return start, end, end - start
 
     def remove_old_plots(episode):
@@ -184,7 +197,7 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
         return plots
 
     def plot_sccatter_traces(start, end):
-        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals[start:end], s=rewards[start:end],
+        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals_series[start:end], s=rewards[start:end],
                                     cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
         return [scatter]
 

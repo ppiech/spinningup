@@ -171,7 +171,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=3, goal_error_base=1, goal_discount_rate=0.1,
+        goal_octaves= 5, goal_error_base=1, goal_discount_rate=0.1,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -180,7 +180,7 @@ def goaly(
         # Inverse model
         train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
-        logger_kwargs=dict(), save_freq=10, seed=0):
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=100):
     """
 
     Args:
@@ -310,16 +310,17 @@ def goaly(
     # Inverse Dynamics Model
     a_inverse, goals_inverse, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, actions_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
-    x_range = core.action_range(env.observation_space)
     a_as_float = tf.cast(a_inverse, tf.float32)
-    inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
+
+    inverse_action_diff = tf.reduce_mean(tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff'), axis=-1)
+
     inverse_action_loss = tf.reduce_mean(inverse_action_diff**2, name='inverse_action_loss') # For training inverse model
-    inverse_goal_diff = tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals, name='inverse_goal_diff')
+    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals, name='inverse_goal_diff'), axis=-1)
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
-    if isinstance(env.action_space, Discrete):
-        inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
+    # if isinstance(env.action_space, Discrete):
+    #     inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
     inverse_goal_loss = tf.reduce_mean(inverse_goal_diff**2 * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
     # inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2), name='inverse_goal_loss')
     inverse_loss = inverse_action_loss + inverse_goal_loss
@@ -334,7 +335,7 @@ def goaly(
     is_action_space_discrete = isinstance(env.action_space, Discrete)
     x_next, x_pred, a_input = core.forward_model(x_ph, actions_ph, env.action_space.shape, is_action_space_discrete)
 
-    forward_diff = tf.abs((tf.cast(x_next, tf.float32) - x_pred) / x_range, name='forward_diff')
+    forward_diff = tf.abs(tf.cast(x_next, tf.float32) - x_pred, name='forward_diff')
     forward_error = tf.reduce_mean(forward_diff, name="forward_error")
     forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
 
@@ -468,7 +469,8 @@ def goaly(
         # debug trace goal reward
         step_goals_reward = goals_step_reward(reward, goal_discount, stability)
 
-        goal_logger.log_tabular('GoalsReward', step_goals_reward)
+        if episode % trace_freq == 0:
+            goal_logger.log_tabular('GoalsReward', step_goals_reward)
         goals_ppo_buf.store(reward, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
         # debug no external reward
         # goals_ppo_buf.store(0, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
@@ -480,19 +482,20 @@ def goaly(
         logger.store(GoalPathLen=actions_ppo_buf.path_len())
 
     def log_trace_step(epoch, episode, observations, actions, goal, reward):
-        goal_logger.log_tabular('Epoch', epoch)
-        goal_logger.log_tabular('Episode', episode)
-        for i in range(0, len(observations)):
-            goal_logger.log_tabular('Observations{}'.format(i), observations[i])
-        if isinstance(env.action_space, Discrete):
-            goal_logger.log_tabular('Actions0'.format(i), actions)
-        else:
-            for i in range(0, len(actions)):
-                goal_logger.log_tabular('Actions{}'.format(i), actions[i])
-        goal_logger.log_tabular('Reward', reward)
-        goal_logger.log_tabular('Goal', goal)
+        if episode % trace_freq == 0:
+            goal_logger.log_tabular('Epoch', epoch)
+            goal_logger.log_tabular('Episode', episode)
+            for i in range(0, len(observations)):
+                goal_logger.log_tabular('Observations{}'.format(i), observations[i])
+            if isinstance(env.action_space, Discrete):
+                goal_logger.log_tabular('Actions0'.format(i), actions)
+            else:
+                for i in range(0, len(actions)):
+                    goal_logger.log_tabular('Actions{}'.format(i), actions[i])
+            goal_logger.log_tabular('Reward', reward)
+            goal_logger.log_tabular('Goal', goal)
 
-        goal_logger.dump_tabular(file_only=True)
+            goal_logger.dump_tabular(file_only=True)
 
     def calculate_stability(observations, new_observations, actions, goal):
         x = np.array([observations, new_observations])

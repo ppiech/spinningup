@@ -131,7 +131,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,16), activation=tf.nn.relu):
+def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
     x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
