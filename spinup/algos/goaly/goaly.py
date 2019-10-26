@@ -180,7 +180,7 @@ def goaly(
         # Inverse model
         train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
-        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=100):
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=1):
     """
 
     Args:
@@ -256,7 +256,7 @@ def goaly(
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
-    goal_logger = Logger(output_fname='pca.txt', **logger_kwargs)
+    traces_logger = Logger(output_fname='traces.txt', **logger_kwargs)
 
     seed += 10000 * proc_id()
     tf.set_random_seed(seed)
@@ -470,7 +470,7 @@ def goaly(
         step_goals_reward = goals_step_reward(reward, goal_discount, stability)
 
         if episode % trace_freq == 0:
-            goal_logger.log_tabular('GoalsReward', step_goals_reward)
+            traces_logger.log_tabular('GoalsReward', step_goals_reward)
         goals_ppo_buf.store(reward, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
         # debug no external reward
         # goals_ppo_buf.store(0, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
@@ -483,19 +483,19 @@ def goaly(
 
     def log_trace_step(epoch, episode, observations, actions, goal, reward):
         if episode % trace_freq == 0:
-            goal_logger.log_tabular('Epoch', epoch)
-            goal_logger.log_tabular('Episode', episode)
+            traces_logger.log_tabular('Epoch', epoch)
+            traces_logger.log_tabular('Episode', episode)
             for i in range(0, len(observations)):
-                goal_logger.log_tabular('Observations{}'.format(i), observations[i])
+                traces_logger.log_tabular('Observations{}'.format(i), observations[i])
             if isinstance(env.action_space, Discrete):
-                goal_logger.log_tabular('Actions0'.format(i), actions)
+                traces_logger.log_tabular('Actions0'.format(i), actions)
             else:
                 for i in range(0, len(actions)):
-                    goal_logger.log_tabular('Actions{}'.format(i), actions[i])
-            goal_logger.log_tabular('Reward', reward)
-            goal_logger.log_tabular('Goal', goal)
+                    traces_logger.log_tabular('Actions{}'.format(i), actions[i])
+            traces_logger.log_tabular('Reward', reward)
+            traces_logger.log_tabular('Goal', goal)
 
-            goal_logger.dump_tabular(file_only=True)
+            traces_logger.dump_tabular(file_only=True)
 
     def calculate_stability(observations, new_observations, actions, goal):
         x = np.array([observations, new_observations])
@@ -538,8 +538,8 @@ def goaly(
 
     def actions_reward(reward, goal_discount, stability):
         # debug: no external reward
-        # r = stability
-        r = reward + stability
+        r = stability
+        # r = reward + stability
         logger.store(ActionsReward=r)
         return r
 

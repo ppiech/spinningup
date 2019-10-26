@@ -2,6 +2,7 @@ import sys
 import bisect
 import numpy as np
 import pandas as pd
+import re
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -16,33 +17,43 @@ animation_control = 'stop'
 animation_offset = 0
 animation_direction = 'right'
 
-def make_animation(all_logdirs, legend=None, xaxis=None, values=None, count=False,
-                   font_scale=1.5, smooth=1, select=None, exclude=None, estimator='mean', pca=False,
-                   colormap_name='Spectral', num_visible_episodes=5, line_traces=False):
+def observation_and_action_features(df):
+    observation_features = []
+    action_features = []
+    for column in df.columns:
+        if re.search("Observations\d+", column):
+            observation_features.append(column)
+        if re.search("Actions\d+", column):
+            action_features.append(column)
+    return observation_features, action_features
+
+def principal_components(df, features):
+    components = df.loc[:, features].values
+    scaled_components = StandardScaler().fit_transform(components)
+    pca = PCA(n_components=1)
+    principal_components = pca.fit_transform(scaled_components)
+    return principal_components.flatten()
+
+
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Reward"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
-    data = get_all_datasets(all_logdirs, legend, select, exclude, filename="pca.txt")
+    data = get_all_datasets(all_logdirs, filename="traces.txt")
     df = data[0]
 
+    observation_features, action_features = observation_and_action_features(df)
 
-    observation_features = ['Observations0', 'Observations1']
+    observations = principal_components(df, observation_features) if len(observation_features) > 1 else df['Observations0'].values
+    actions = principal_components(df, action_features) if len(action_features) > 1 else df['Actions0'].values
 
-    observations_components = df.loc[:, observation_features].values
+    # Useful values
+    num_goals = df['Goal'].max() + 1
     num_epochs = df['Epoch'].max()
     num_episodes = df['Episode'].max()
     unique_episodes = set(df['Episode'])
 
-    observations_components = StandardScaler().fit_transform(observations_components)
-    pca = PCA(n_components=1)
-    observations_principal_components = pca.fit_transform(observations_components)
-    observations_principal_df = pd.DataFrame(data = observations_principal_components, columns = ['c1'])
-    final_df = pd.concat([observations_principal_df, df[['Actions0']], df[['Goal']], df[['Epoch']], df[['Episode']]], axis = 1)
-
-    observations = final_df['c1']
-    actions = final_df['Actions0']
-
     goals = df.loc[:,['Goal']].values.flatten()
-    rewards = MinMaxScaler((1, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
+    rewards_scaled = MinMaxScaler((1, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
 
     goals_series = df['Goal']
     goals_runs_starts = goals_series.loc[goals_series.shift() != goals_series].index
@@ -58,9 +69,6 @@ def make_animation(all_logdirs, legend=None, xaxis=None, values=None, count=Fals
     ax_traces.xlim=(observations.min(), observations.max())
     ax_traces.ylim=(actions.min(), actions.max())
     ax_traces.grid()
-
-    # Useful values
-    num_goals = final_df['Goal'].max() + 1
 
     plots = []
 
@@ -85,13 +93,10 @@ def make_animation(all_logdirs, legend=None, xaxis=None, values=None, count=Fals
 
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
-        if line_traces:
-            plots.extend(plot_line_traces(episode_start, episode_end))
-        else:
-            plots.extend(plot_sccatter_traces(episode_start, episode_end))
+        plots.extend(plot_sccatter_traces(episode_start, episode_end))
 
-        plots.extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
-        plots.extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
+        for value in values:
+            plots.extend(plot_value_over_time(episode_start, episode_end, value))
 
         ax_charts.set(xlim=(episode_start, episode_end))
 
@@ -115,28 +120,18 @@ def make_animation(all_logdirs, legend=None, xaxis=None, values=None, count=Fals
             plot.remove()
         plots.clear()
 
-    def plot_line_traces(start, end):
-        plots = []
-        goal_start_i = bisect.bisect_left(goals_runs_starts, start)
-
-        while goals_runs_starts[goal_start_i] < end:
-            start_i = goals_runs_starts[goal_start_i]
-            end_i = goals_runs_starts[goal_start_i+1] + 1
-            color = goal_color(df['Goal'][start_i])
-            plot = ax_chart.plot(observations[start_i:end_i], actions[start_i:end_i], lw=0.5, c=color)
-            plots.append(plot)
-            goal_start_i += 1
-
-        return plots
-
     def plot_sccatter_traces(start, end):
-        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals_series[start:end], s=rewards[start:end],
-                                    cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
+        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals_series[start:end].values,
+                                    s=rewards_scaled[start:end], cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
         return [scatter]
 
     def plot_value_over_time(start, end, column_name, offset = 0):
+        if not column_name in df.columns:
+            raise
+
         plots = []
         ep_df = df.iloc[start:end]
+
         x = np.arange(start, end)
         y = ep_df[column_name].values
 
@@ -148,6 +143,7 @@ def make_animation(all_logdirs, legend=None, xaxis=None, values=None, count=Fals
     def goal_color(goal):
         return colormap(float(goal / (num_goals - 1)))
 
+
     fig.canvas.mpl_connect('key_press_event', onKey)
     anim = FuncAnimation(fig, animate, init_func=init, interval=100, frames=sys.maxsize)
     plt.show()
@@ -157,14 +153,9 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('logdir', nargs='*')
-    parser.add_argument('--legend', '-l', nargs='*')
-    parser.add_argument('--xaxis', '-x', default='TotalEnvInteracts')
-    parser.add_argument('--value', '-y', default='Performance', nargs='*')
-    parser.add_argument('--count', action='store_true')
-    parser.add_argument('--smooth', '-s', type=int, default=1)
-    parser.add_argument('--select', nargs='*')
-    parser.add_argument('--exclude', nargs='*')
-    parser.add_argument('--est', default='mean')
+    parser.add_argument('--colormap', '-c', default='Spectral')
+    parser.add_argument('--visible_episodes', '-v', type=int, default=5)
+    parser.add_argument('--value', '-y', default='Reward', nargs='*')
     args = parser.parse_args()
     """
 
@@ -173,51 +164,12 @@ def main():
             directories, which the plotter will autocomplete internally) as
             you'd like to plot from.
 
-        legend (strings): Optional way to specify legend for the plot. The
-            plotter legend will automatically use the ``exp_name`` from the
-            config.json file, unless you tell it otherwise through this flag.
-            This only works if you provide a name for each directory that
-            will get plotted. (Note: this may not be the same as the number
-            of logdir args you provide! Recall that the plotter looks for
-            autocompletes of the logdir args: there may be more than one
-            match for a given logdir prefix, and you will need to provide a
-            legend string for each one of those matches---unless you have
-            removed some of them as candidates via selection or exclusion
-            rules (below).)
-
-        xaxis (string): Pick what column from data is used for the x-axis.
-             Defaults to ``TotalEnvInteracts``.
-
-        value (strings): Pick what columns from data to graph on the y-axis.
-            Submitting multiple values will produce multiple graphs. Defaults
-            to ``Performance``, which is not an actual output of any algorithm.
-            Instead, ``Performance`` refers to either ``AverageEpRet``, the
-            correct performance measure for the on-policy algorithms, or
-            ``AverageTestEpRet``, the correct performance measure for the
-            off-policy algorithms. The plotter will automatically figure out
-            which of ``AverageEpRet`` or ``AverageTestEpRet`` to report for
-            each separate logdir.
-
-        count: Optional flag. By default, the plotter shows y-values which
-            are averaged across all results that share an ``exp_name``,
-            which is typically a set of identical experiments that only vary
-            in random seed. But if you'd like to see all of those curves
-            separately, use the ``--count`` flag.
-
-        smooth (int): Smooth data by averaging it over a fixed window. This
-            parameter says how wide the averaging window will be.
-
-        select (strings): Optional selection rule: the plotter will only show
-            curves from logdirs that contain all of these substrings.
-
-        exclude (strings): Optional exclusion rule: plotter will only show
-            curves from logdirs that do not contain these substrings.
-
     """
 
-    make_animation(args.logdir, args.legend, args.xaxis, args.value, args.count,
-               smooth=args.smooth, select=args.select, exclude=args.exclude,
-               estimator=args.est)
+    make_animation(args.logdir, args.colormap, args.visible_episodes)
+
+    #TODO use args.value
+    # make_animation(args.logdir, args.colormap, args.visible_episodes, args.value)
 
 if __name__ == "__main__":
     main()
