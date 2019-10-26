@@ -68,11 +68,10 @@ animation_control = 'go'
 animation_offset = 0
 animation_direction = 'right'
 
-def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_traces=False):
+def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=20, line_traces=False):
 
     observation_features = ['Observations0', 'Observations1']
 
-    #
     observations_components = df.loc[:, observation_features].values
     num_epochs = df['Epoch'].max()
     num_episodes = df['Episode'].max()
@@ -83,7 +82,6 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
     observations_principal_components = pca.fit_transform(observations_components)
     observations_principal_df = pd.DataFrame(data = observations_principal_components, columns = ['c1'])
     final_df = pd.concat([observations_principal_df, df[['Actions0']], df[['Goal']], df[['Epoch']], df[['Episode']]], axis = 1)
-    # final_df = df
 
     observations = final_df['c1']
     actions = final_df['Actions0']
@@ -109,17 +107,14 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
     # Useful values
     num_goals = final_df['Goal'].max() + 1
 
-    # scatter = ax.scatter([], [], c = [], cmap=plt.cm.bwr, s = 3)
-
-    plots = {}
-    # bars = {}
+    plots = []
 
     def onKey(event):
         global animation_offset
         global animation_control
         if animation_control == 'stop' and event.key in ['left', 'right']:
             animation_direction = event.key
-            animation_offset += 1 if animation_direction == 'left' else -1
+            animation_offset += num_visible_episodes if animation_direction == 'left' else -num_visible_episodes
         if event.key == ' ':
             animation_control = 'stop' if animation_control == 'go' else 'go'
 
@@ -133,54 +128,37 @@ def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=5, line_
 
         remove_old_plots(episode)
 
-        episode_start, episode_end, episode_len = episode_start_end(episode)
+        episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
         if line_traces:
-            plots[episode] = plot_line_traces(episode_start, episode_end)
+            plots.extend(plot_line_traces(episode_start, episode_end))
         else:
-            plots[episode] = plot_sccatter_traces(episode_start, episode_end)
+            plots.extend(plot_sccatter_traces(episode_start, episode_end))
 
-        # plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
-        plots[episode].extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
+        plots.extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
+        plots.extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
 
-        ax_charts.set(xlim=(episode_start - (num_visible_episodes - 1) * episode_len, episode_end))
+        ax_charts.set(xlim=(episode_start, episode_end))
 
     def episode_from_step(animation_step):
         global animation_offset
-        episode = -1
-        while episode < 0:
-            if animation_control == 'stop':
-                animation_offset += 1
-            episode = int((animation_step - animation_offset) % num_episodes)
-            print("next episode = {}".format(episode))
-            if episode not in unique_episodes:
-                animation_offset -= 1
-                episode = -1
-
-        return episode
+        if animation_control == 'stop':
+            animation_offset += 1
+        idx = int((animation_step - animation_offset) % len(episode_starts.values))
+        return episode_starts.values[idx]
 
     def episode_start_end(episode, num_episodes=1):
         episode_idxs = episode_starts.loc[episode_starts >= episode]
         start = episode_idxs.index[0]
-        last_episode_len_idx = num_episodes if num_episodes < len(episode_idxs) else : len(episode_idxs) - 1
+        last_episode_len_idx = num_episodes if num_episodes < len(episode_idxs) else len(episode_idxs) - 1
         end = episode_idxs.index[last_episode_len_idx] - 1
-        # end_row = episode_starts.iloc[start:].loc[episode_starts != episode]
-        # end = end_row.index[0] if len(end_row) > 0 else len(df)
-        print("start={}, end={}".format(start, end))
+
         return start, end, end - start
 
     def remove_old_plots(episode):
-        if animation_direction == 'right':
-            to_remove = episode - num_visible_episodes if episode >= num_visible_episodes else (episode - num_visible_episodes + num_episodes)
-        else:
-            to_remove = episode + 1
-
-        if to_remove in plots:
-            [plot.remove() for plot in plots[to_remove]]
-            del plots[to_remove]
-        if episode in plots:
-            [plot.remove() for plot in plots[episode]]
-            del plots[episode]
+        for plot in plots:
+            plot.remove()
+        plots.clear()
 
     def plot_line_traces(start, end):
         plots = []
