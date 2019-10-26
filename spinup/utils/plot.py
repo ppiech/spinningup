@@ -6,14 +6,6 @@ import os
 import os.path as osp
 import numpy as np
 
-# pca
-import sys
-import matplotlib.cm as cm
-from matplotlib.animation import FuncAnimation
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.decomposition import PCA
-import bisect
-
 DIV_LINE_WIDTH = 50
 
 # Global vars for tracking and labeling data at load time.
@@ -64,139 +56,6 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
     plt.tight_layout(pad=0.5)
 
-animation_control = 'go'
-animation_offset = 0
-animation_direction = 'right'
-
-def plot_pca(df, colormap=cm.get_cmap('Spectral'), num_visible_episodes=20, line_traces=False):
-
-    observation_features = ['Observations0', 'Observations1']
-
-    observations_components = df.loc[:, observation_features].values
-    num_epochs = df['Epoch'].max()
-    num_episodes = df['Episode'].max()
-    unique_episodes = set(df['Episode'])
-
-    observations_components = StandardScaler().fit_transform(observations_components)
-    pca = PCA(n_components=1)
-    observations_principal_components = pca.fit_transform(observations_components)
-    observations_principal_df = pd.DataFrame(data = observations_principal_components, columns = ['c1'])
-    final_df = pd.concat([observations_principal_df, df[['Actions0']], df[['Goal']], df[['Epoch']], df[['Episode']]], axis = 1)
-
-    observations = final_df['c1']
-    actions = final_df['Actions0']
-
-    goals = df.loc[:,['Goal']].values.flatten()
-    rewards = MinMaxScaler((1, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
-
-    goals_series = df['Goal']
-    goals_runs_starts = goals_series.loc[goals_series.shift() != goals_series].index
-
-    episodes_series = df['Episode']
-    episode_starts = episodes_series.loc[episodes_series.shift() != episodes_series]
-
-    #  Create subplots
-    fig, (ax_charts, ax_traces) = plt.subplots(2, 1, figsize = (20,10))
-
-    # Traces
-    ax_traces.set_title('Goals mapped over Action/Observation space', fontsize = 10)
-    ax_traces.xlim=(observations.min(), observations.max())
-    ax_traces.ylim=(actions.min(), actions.max())
-    ax_traces.grid()
-
-    # Useful values
-    num_goals = final_df['Goal'].max() + 1
-
-    plots = []
-
-    def onKey(event):
-        global animation_offset
-        global animation_control
-        if animation_control == 'stop' and event.key in ['left', 'right']:
-            animation_direction = event.key
-            animation_offset += num_visible_episodes if animation_direction == 'left' else -num_visible_episodes
-        if event.key == ' ':
-            animation_control = 'stop' if animation_control == 'go' else 'go'
-
-    def init():
-        ax_traces.set_title('Goals mapped over Action/Observation space')
-
-    def animate(animation_step):
-        episode = episode_from_step(animation_step)
-
-        ax_traces.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
-
-        remove_old_plots(episode)
-
-        episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
-
-        if line_traces:
-            plots.extend(plot_line_traces(episode_start, episode_end))
-        else:
-            plots.extend(plot_sccatter_traces(episode_start, episode_end))
-
-        plots.extend(plot_value_over_time(episode_start, episode_end, 'Observations0'))
-        plots.extend(plot_value_over_time(episode_start, episode_end, 'Reward'))
-
-        ax_charts.set(xlim=(episode_start, episode_end))
-
-    def episode_from_step(animation_step):
-        global animation_offset
-        if animation_control == 'stop':
-            animation_offset += 1
-        idx = int((animation_step - animation_offset) % len(episode_starts.values))
-        return episode_starts.values[idx]
-
-    def episode_start_end(episode, num_episodes=1):
-        episode_idxs = episode_starts.loc[episode_starts >= episode]
-        start = episode_idxs.index[0]
-        last_episode_len_idx = num_episodes if num_episodes < len(episode_idxs) else len(episode_idxs) - 1
-        end = episode_idxs.index[last_episode_len_idx] - 1
-
-        return start, end, end - start
-
-    def remove_old_plots(episode):
-        for plot in plots:
-            plot.remove()
-        plots.clear()
-
-    def plot_line_traces(start, end):
-        plots = []
-        goal_start_i = bisect.bisect_left(goals_runs_starts, start)
-
-        while goals_runs_starts[goal_start_i] < end:
-            start_i = goals_runs_starts[goal_start_i]
-            end_i = goals_runs_starts[goal_start_i+1] + 1
-            color = goal_color(df['Goal'][start_i])
-            plot = ax_chart.plot(observations[start_i:end_i], actions[start_i:end_i], lw=0.5, c=color)
-            plots.append(plot)
-            goal_start_i += 1
-
-        return plots
-
-    def plot_sccatter_traces(start, end):
-        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals_series[start:end], s=rewards[start:end],
-                                    cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
-        return [scatter]
-
-    def plot_value_over_time(start, end, column_name, offset = 0):
-        plots = []
-        ep_df = df.iloc[start:end]
-        x = np.arange(start, end)
-        y = ep_df[column_name].values
-
-        plots.extend( ax_charts.plot(x, y, c='gray', lw=0.5) )
-        plots.append( ax_charts.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2, vmin=0, vmax=(num_goals - 1)) )
-
-        return plots
-
-    def goal_color(goal):
-        return colormap(float(goal / (num_goals - 1)))
-
-    fig.canvas.mpl_connect('key_press_event', onKey)
-    anim = FuncAnimation(fig, animate, init_func=init, interval=100, frames=sys.maxsize)
-    plt.show()
-
 def get_datasets(logdir, condition=None, filename='progress.txt'):
     """
     Recursively look through logdir for output files produced by
@@ -240,7 +99,7 @@ def get_datasets(logdir, condition=None, filename='progress.txt'):
     return datasets
 
 
-def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None, pca=False):
+def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None, filename="progress.txt"):
 
     """
     For every entry in all_logdirs,
@@ -281,9 +140,6 @@ def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None, pca=Fa
     assert not(legend) or (len(legend) == len(logdirs)), \
         "Must give a legend title for each set of experiments."
 
-    # Load data from logdirs
-    filename = "progress.txt" if not pca else "pca.txt"
-
     data = []
     if legend:
         for log, leg in zip(logdirs, legend):
@@ -294,20 +150,16 @@ def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None, pca=Fa
     return data
 
 def make_plots(all_logdirs, legend=None, xaxis=None, values=None, count=False,
-               font_scale=1.5, smooth=1, select=None, exclude=None, estimator='mean', pca=False):
+               font_scale=1.5, smooth=1, select=None, exclude=None, estimator='mean'):
 
-    data = get_all_datasets(all_logdirs, legend, select, exclude, pca)
-
-    if pca:
-        plot_pca(data[0])
-    else:
-        values = values if isinstance(values, list) else [values]
-        condition = 'Condition2' if count else 'Condition1'
-        estimator = getattr(np, estimator)      # choose what to show on main curve: mean? max? min?
-        for value in values:
-            plt.figure()
-            plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
-        plt.show()
+    data = get_all_datasets(all_logdirs, legend, select, exclude)
+    values = values if isinstance(values, list) else [values]
+    condition = 'Condition2' if count else 'Condition1'
+    estimator = getattr(np, estimator)      # choose what to show on main curve: mean? max? min?
+    for value in values:
+        plt.figure()
+        plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
+    plt.show()
 
 def main():
     import argparse
@@ -318,7 +170,6 @@ def main():
     parser.add_argument('--value', '-y', default='Performance', nargs='*')
     parser.add_argument('--count', action='store_true')
     parser.add_argument('--smooth', '-s', type=int, default=1)
-    parser.add_argument('--pca', action='store_true')
     parser.add_argument('--select', nargs='*')
     parser.add_argument('--exclude', nargs='*')
     parser.add_argument('--est', default='mean')
@@ -374,7 +225,7 @@ def main():
 
     make_plots(args.logdir, args.legend, args.xaxis, args.value, args.count,
                smooth=args.smooth, select=args.select, exclude=args.exclude,
-               estimator=args.est, pca=args.pca)
+               estimator=args.est)
 
 if __name__ == "__main__":
     main()
