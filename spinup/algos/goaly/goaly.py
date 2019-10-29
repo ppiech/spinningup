@@ -171,7 +171,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves= 5, goal_error_base=1, goal_discount_rate=0.1,
+        goal_octaves= 5, goal_error_base=1, goal_discount_rate=0.03,
         goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -329,7 +329,11 @@ def goaly(
 
     # Errors used for calculating return after each step.
     inverse_action_error = tf.reduce_mean(inverse_action_diff / ((tf.abs(a_as_float + a_predicted)) / a_range))
-    inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
+
+    # when calculating goal error for stability reward, compare numerical goal value
+    inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
+    # old method:
+    #inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
 
     # Forward model
     is_action_space_discrete = isinstance(env.action_space, Discrete)
@@ -339,11 +343,11 @@ def goaly(
     forward_error = tf.reduce_mean(forward_diff, name="forward_error")
     forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
 
-    def ppo_objectives(adv_ph, ret_ph, logp, logp_old_ph, clip_ratio):
+    def ppo_objectives(adv_ph, val, ret_ph, logp, logp_old_ph, clip_ratio):
         ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
         min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
         pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
-        v_loss = tf.reduce_mean((ret_ph - actions_v)**2)
+        v_loss = tf.reduce_mean((ret_ph - val)**2)
 
         approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
         approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
@@ -353,10 +357,10 @@ def goaly(
         return pi_loss, v_loss, approx_kl, approx_ent, clipfrac
 
     goals_pi_loss, goals_v_loss, goals_approx_kl, goals_approx_ent, goals_clipfrac = ppo_objectives(
-        goals_adv_ph, goals_ret_ph, goals_logp, goals_logp_old_ph, goals_clip_ratio)
+        goals_adv_ph, goals_v, goals_ret_ph, goals_logp, goals_logp_old_ph, goals_clip_ratio)
 
     actions_pi_loss, actions_v_loss, actions_approx_kl, actions_approx_ent, actions_clipfrac = ppo_objectives(
-        actions_adv_ph, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
+        actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
     # goaly reward
     stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
@@ -538,15 +542,15 @@ def goaly(
 
     def actions_reward(reward, goal_discount, stability):
         # debug: no external reward
-        r = stability
-        # r = reward + stability
+        # r = stability
+        r = reward + stability
         logger.store(ActionsReward=r)
         return r
 
     def goals_step_reward(reward, goal_discount, stability):
         # debug: no goal length reward
-        r = goal_discount * (stability + actions_ppo_buf.path_len())
-        # r = goal_discount * (stability + actions_ppo_buf  .path_len())
+        r = goal_discount * (actions_ppo_buf.path_len())
+        # r = goal_discount * (stability + actions_ppo_buf.path_len())
         logger.store(GoalsReward=r)
         return r
 
