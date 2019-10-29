@@ -13,7 +13,7 @@ if __name__ == '__main__':
     eg.add('env_name', 'CartPole-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 100)
-    eg.add('steps_per_epoch', 4000)
+    eg.add('steps_per_epoch', 400)
     eg.add('ac_kwargs:hidden_sizes', [(32,), (64,64)], 'hid')
     eg.add('ac_kwargs:activation', [tf.tanh, tf.nn.relu], '')
     eg.run(goaly, num_cpu=args.cpu)
