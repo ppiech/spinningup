@@ -328,7 +328,10 @@ def goaly(
     # inverse_loss = inverse_goal_loss
 
     # Errors used for calculating return after each step.
-    inverse_action_error = tf.reduce_mean(inverse_action_diff / ((tf.abs(a_as_float + a_predicted)) / a_range))
+    # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
+    # towards small amplitude actions.
+    inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) / a_range), 1e-6)
+    inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
     inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
