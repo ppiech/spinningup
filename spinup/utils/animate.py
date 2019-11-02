@@ -3,6 +3,7 @@ import bisect
 import numpy as np
 import pandas as pd
 import re
+import math
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -35,7 +36,7 @@ def principal_components(df, features):
     return principal_components.flatten()
 
 
-def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Reward"]):
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Reward", "GoalsVVal", "GoalsStepReward", "ActionsReward"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -62,7 +63,14 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
     episode_starts = episodes_series.loc[episodes_series.shift() != episodes_series]
 
     #  Create subplots
-    fig, (ax_charts, ax_traces) = plt.subplots(2, 1, figsize = (20,10))
+    fig, (ax_charts_root, ax_traces) = plt.subplots(2, 1, figsize = (20,10))
+
+    ax_charts = []
+    for i in range(len(values)):
+        ax = ax_charts_root if i == 0 else ax_charts_root.twinx()
+        value_series = df[values[i]]
+        ax.set_ylim(value_series.min(), value_series.max())
+        ax_charts.append(ax)
 
     # Traces
     ax_traces.set_title('Goals mapped over Action/Observation space', fontsize = 10)
@@ -95,10 +103,18 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
 
         plots.extend(plot_sccatter_traces(episode_start, episode_end))
 
-        for value in values:
-            plots.extend(plot_value_over_time(episode_start, episode_end, value))
-
-        ax_charts.set(xlim=(episode_start, episode_end))
+        ax_charts[0].set(xlim=(episode_start, episode_end))
+        ax = None
+        colors = ['r', 'b', 'g', 'y', 'c']
+        lines = []
+        for i in range(len(values)):
+            value = values[i]
+            scatter, line = plot_value_over_time(ax_charts[i], episode_start, episode_end, value, colors[i % len(colors)])
+            # if not math.isnan(min) and not math.isnan(max):
+            #     ax_charts[i].set_ylim(min, max)
+            lines.append(line)
+            plots.extend([line, scatter])
+        ax_charts[0].legend(lines, values, loc=0)
 
     def episode_from_step(animation_step):
         global animation_offset
@@ -125,20 +141,25 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
                                     s=rewards_scaled[start:end], cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
         return [scatter]
 
-    def plot_value_over_time(start, end, column_name, offset = 0):
+    def plot_value_over_time(ax, start, end, column_name, color, show_scatter=True):
         if not column_name in df.columns:
             raise
 
-        plots = []
         ep_df = df.iloc[start:end]
 
         x = np.arange(start, end)
         y = ep_df[column_name].values
+        # min = ep_df[column_name].min()
+        # max = ep_df[column_name].max()
 
-        plots.extend( ax_charts.plot(x, y, c='gray', lw=0.5) )
-        plots.append( ax_charts.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2, vmin=0, vmax=(num_goals - 1)) )
+        line = ax.plot(x, y, lw=0.5, c=color, label=column_name)
+        # ax.set_yticks([])
+        if show_scatter:
+            scatter =  ax.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2, vmin=0, vmax=(num_goals - 1))
+        else:
+            scatter = None
 
-        return plots
+        return scatter, line[0]#, min, max
 
     def goal_color(goal):
         return colormap(float(goal / (num_goals - 1)))
