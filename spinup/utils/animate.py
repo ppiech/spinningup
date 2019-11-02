@@ -86,6 +86,7 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         if animation_control == 'stop' and event.key in ['left', 'right']:
             animation_direction = event.key
             animation_offset += num_visible_episodes if animation_direction == 'left' else -num_visible_episodes
+            remove_old_plots()
         if event.key == ' ':
             animation_control = 'stop' if animation_control == 'go' else 'go'
 
@@ -95,9 +96,12 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
     def animate(animation_step):
         episode = episode_from_step(animation_step)
 
+        if animation_control == 'stop' and len(plots) > 0:
+            return
+
         ax_traces.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
 
-        remove_old_plots(episode)
+        remove_old_plots()
 
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
@@ -131,7 +135,7 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
 
         return start, end, end - start
 
-    def remove_old_plots(episode):
+    def remove_old_plots():
         for plot in plots:
             plot.remove()
         plots.clear()
