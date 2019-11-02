@@ -171,8 +171,8 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves= 5, goal_error_base=1, goal_discount_rate=0.03,
-        goals_gamma=0.99, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
+        goal_octaves= 3, goal_error_base=1, goal_discount_rate=0.03,
+        goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
@@ -180,7 +180,7 @@ def goaly(
         # Inverse model
         train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
-        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=1):
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=20):
     """
 
     Args:
@@ -364,8 +364,8 @@ def goaly(
 
     # goaly reward
     stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
-    # debug: stability from goals only
-    # stability_reward =  -inverse_goal_error
+    # debug: cap stability reward
+    stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 10.0), -10.0)
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
@@ -467,25 +467,23 @@ def goaly(
     ep_obs = [[]]
     episode = 0
 
-    def store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount):
+    def store_training_step(observations, goal, goals_step_reward, goal_discounts, actions, actions_reward_v, reward, \
+                            goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount):
         trajectory_buf.store(observations, goal, goal_discounts, actions)
 
         # debug trace goal reward
-        step_goals_reward = goals_step_reward(reward, goal_discount, stability)
-
-        if episode % trace_freq == 0:
-            traces_logger.log_tabular('GoalsReward', step_goals_reward)
-        goals_ppo_buf.store(reward, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
+        goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
         # debug no external reward
         # goals_ppo_buf.store(0, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
-        actions_ppo_buf.store(actions_reward(reward, goal_discount, stability), 0, actions_v_t, actions_logp_t)
+        actions_ppo_buf.store(actions_reward_v, 0, actions_v_t, actions_logp_t)
 
         logger.store(ActionsVVals=actions_v_t)
         logger.store(GoalsVVals=goals_v_t)
         logger.store(Goal=goal)
+        # logger.storeOne("Goal{}Reward".format(goal), reward)
         logger.store(GoalPathLen=actions_ppo_buf.path_len())
 
-    def log_trace_step(epoch, episode, observations, actions, goal, reward):
+    def log_trace_step(epoch, episode, observations, actions, goal, reward, goals_v_t, goals_step_reward_v, actions_reward_v):
         if episode % trace_freq == 0:
             traces_logger.log_tabular('Epoch', epoch)
             traces_logger.log_tabular('Episode', episode)
@@ -498,6 +496,9 @@ def goaly(
                     traces_logger.log_tabular('Actions{}'.format(i), actions[i])
             traces_logger.log_tabular('Reward', reward)
             traces_logger.log_tabular('Goal', goal)
+            traces_logger.log_tabular('GoalsVVal', goals_v_t)
+            traces_logger.log_tabular('GoalsStepReward', goals_step_reward_v)
+            traces_logger.log_tabular('ActionsReward', actions_reward_v)
 
             traces_logger.dump_tabular(file_only=True)
 
@@ -549,8 +550,9 @@ def goaly(
 
     def goals_step_reward(reward, goal_discount, stability):
         # debug: no goal length reward
-        r = goal_discount * (actions_ppo_buf.path_len())
-        # r = goal_discount * (stability + actions_ppo_buf.path_len())
+        # r = goal_discount * (actions_ppo_buf.path_len())
+        # r = 0
+        r = goal_discount * (stability)
         logger.store(GoalsReward=r)
         return r
 
@@ -572,9 +574,13 @@ def goaly(
 
             goal = goal[0]
             actions = actions[0]
+            goals_v_t = goals_v_t[0]
 
-            store_training_step(observations, goal, goal_discounts, actions, reward, goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
-            log_trace_step(epoch, episode, observations, actions, goal, reward)
+            goals_step_reward_v = goals_step_reward(reward, goal_discount, stability)
+            actions_reward_v = actions_reward(reward, goal_discount, stability)
+            store_training_step(observations, goal, goals_step_reward_v, goal_discounts, actions, actions_reward_v, reward,
+                                goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
+            log_trace_step(epoch, episode, observations, actions, goal, reward, goals_v_t, goals_step_reward_v, actions_reward_v)
 
             new_observations, reward, done, _ = env.step(actions)
 
@@ -585,9 +591,6 @@ def goaly(
             core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
             goal_discount = core.get_goal_discount(goal_discounts, goal)
             logger.store(GoalDiscount=goal_discount)
-            # discounted_stability = goal_discount * stability
-            # debug: don't dicsocunt stability
-            # discounted_stability = stability
 
             ep_ret += reward
             ep_len += 1
@@ -640,7 +643,9 @@ def goaly(
         logger.log_tabular('DeltaLossInverse', average_only=True)
         logger.log_tabular('LossForward', average_only=True)
         logger.log_tabular('DeltaLossForward', average_only=True)
-        logger.log_tabular('Time', time.time()-start_time)
+        # for goal_num in range(num_goals):
+        #     logger.log_tabular("Goal{}Reward".format(goal_num), average_only=True)
+        # logger.log_tabular('Time', time.time()-start_time)
         logger.dump_tabular()
 
 if __name__ == '__main__':
