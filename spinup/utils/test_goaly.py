@@ -3,6 +3,7 @@ import joblib
 import os
 import os.path as osp
 import tensorflow as tf
+import numpy as np
 from spinup import EpochLogger
 from spinup.utils.logx import restore_tf_graph
 
@@ -29,7 +30,11 @@ def load_policy(fpath, itr='last', deterministic=False):
         action_op = model['pi']
 
     # make function for producing an action given a single state
-    get_action = lambda x : sess.run(action_op, feed_dict={model['x']: x[None,:]})[0]
+    def get_action(prev_goal, x):
+        goal = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:], model['goal_discounts_ph']: np.full((5), 0.5).reshape(1, -1) })
+        # goal = np.array([12])
+        action = sess.run(action_op, feed_dict={model['x']: x[None,:], model['goals_ph']: goal})[0]
+        return goal, action
 
     # try to load environment from save
     # (sometimes this will fail because the environment could not be pickled)
@@ -41,7 +46,6 @@ def load_policy(fpath, itr='last', deterministic=False):
 
     return env, get_action
 
-
 def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True):
 
     assert env is not None, \
@@ -50,13 +54,20 @@ def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True):
         "page on Experiment Outputs for how to handle this situation."
 
     logger = EpochLogger()
-    o, r, d, ep_ret, ep_len, n = env.reset(), 0, False, 0, 0, 0
+    o, r, d, ep_ret, ep_len, n, g = env.reset(), 0, False, 0, 0, 0, [0]
     while n < num_episodes:
         if render:
             env.render()
             time.sleep(1e-3)
 
-        a = get_action(o)
+        prev_g = g
+        g, a = get_action(prev_g, o)
+
+        if prev_g[0] != g[0]:
+            print(' ' + str(g[0]), end='', flush=True)
+        else:
+            print('.', end='', flush=True)
+
         o, r, d, _ = env.step(a)
 
         #reward standing still:
@@ -67,6 +78,7 @@ def run_policy(env, get_action, max_ep_len=None, num_episodes=100, render=True):
 
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpLen=ep_len)
+            print('')
             print('Episode %d \t EpRet %.3f \t EpLen %d'%(n, ep_ret, ep_len))
             o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
             n += 1
