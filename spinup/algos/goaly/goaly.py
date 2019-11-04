@@ -171,7 +171,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves= 3, goal_error_base=1, goal_discount_rate=0.03,
+        goal_octaves=5, goal_error_base=1, goal_discount_rate=0.2,
         goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -385,8 +385,8 @@ def goaly(
     sess.run(sync_all_params())
 
     # Setup model saving
-    logger.setup_tf_saver(sess, inputs={'x': x_ph, 'goals_ph': goals_ph }, \
-                          outputs={'pi': actions_pi, 'v': actions_v})
+    logger.setup_tf_saver(sess, inputs={'x': x_ph, 'goals_ph': goals_ph, 'goal_discounts_ph': goal_discounts_ph }, \
+                          outputs={'pi': actions_pi, 'v': actions_v, 'goals_pi': goals_pi, 'goals_v': goals_v})
 
     def update():
         # Train inverse and forward
@@ -477,7 +477,7 @@ def goaly(
         # debug trace goal reward
         goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
         # debug no external reward
-        # goals_ppo_buf.store(0, goals_step_reward(reward, goal_discount, stability), goals_v_t, goals_logp_t)
+        # goals_ppo_buf.store(0, goals_step_reward, goals_v_t, goals_logp_t)
         actions_ppo_buf.store(actions_reward_v, 0, actions_v_t, actions_logp_t)
 
         logger.store(ActionsVVals=actions_v_t)
