@@ -36,7 +36,7 @@ def principal_components(df, features):
     return principal_components.flatten()
 
 
-def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Reward", "GoalsVVal", "GoalsStepReward", "ActionsReward"]):
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations2", "Reward", "GoalsVVal", "GoalsStepReward", "ActionsReward"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -108,16 +108,19 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         plots.extend(plot_sccatter_traces(episode_start, episode_end))
 
         ax_charts[0].set(xlim=(episode_start, episode_end))
-        ax = None
-        colors = ['r', 'b', 'g', 'y', 'c']
+        colors = ['r', 'b', 'g', 'y', 'm', 'c']
         lines = []
         for i in range(len(values)):
             value = values[i]
-            scatter, line = plot_value_over_time(ax_charts[i], episode_start, episode_end, value, colors[i % len(colors)])
-            # if not math.isnan(min) and not math.isnan(max):
-            #     ax_charts[i].set_ylim(min, max)
+            color = colors[i % len(colors)]
+            scatter, line = plot_value_over_time(ax_charts[i], episode_start, episode_end, value, color, i==0)
+            if i != 0:
+                ax_charts[i].spines['right'].set_color(color)
+                ax_charts[i].spines['right'].set_position(('axes', 1 + (i - 1) * 0.03))
             lines.append(line)
-            plots.extend([line, scatter])
+            plots.append(line)
+            if scatter != None:
+                plots.append(scatter)
         ax_charts[0].legend(lines, values, loc=0)
 
     def episode_from_step(animation_step):
@@ -153,24 +156,20 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
 
         x = np.arange(start, end)
         y = ep_df[column_name].values
-        # min = ep_df[column_name].min()
-        # max = ep_df[column_name].max()
-
         line = ax.plot(x, y, lw=0.5, c=color, label=column_name)
-        # ax.set_yticks([])
         if show_scatter:
             scatter =  ax.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2, vmin=0, vmax=(num_goals - 1))
         else:
             scatter = None
 
-        return scatter, line[0]#, min, max
+        return scatter, line[0]
 
     def goal_color(goal):
         return colormap(float(goal / (num_goals - 1)))
 
 
     fig.canvas.mpl_connect('key_press_event', onKey)
-    anim = FuncAnimation(fig, animate, init_func=init, interval=100, frames=sys.maxsize)
+    anim = FuncAnimation(fig, animate, init_func=init, interval=300, frames=sys.maxsize)
     plt.show()
 
 
