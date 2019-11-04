@@ -229,9 +229,18 @@ def get_goal_discount(goal_discounts, goal):
         discount += octave_discount / num_discounts
     return discount * 2
 
+"""
+For goal-discounts 0.5% is the mid-point and represents neutral.  If discount moves towards 0 or 1, it causes a
+corresponding goal to be discounted towards 0.
+"""
 def update_goal_discounts(goal_discounts, goal, discount_rate):
     for i in range(0, len(goal_discounts)):
-        if (goal & (1 << i)):
-            goal_discounts[i] -= goal_discounts[i] * discount_rate
+        if goal_discounts[i] < 0.5:
+            goal_discount_value = goal_discounts[i] * discount_rate
         else:
-            goal_discounts[i] += (1 - goal_discounts[i]) * discount_rate
+            goal_discount_value = (1 - goal_discounts[i]) * discount_rate
+
+        if goal & (1 << i):
+            goal_discounts[i] -= goal_discount_value
+        else:
+            goal_discounts[i] += goal_discount_value
