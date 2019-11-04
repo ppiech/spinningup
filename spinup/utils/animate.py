@@ -36,7 +36,7 @@ def principal_components(df, features):
     return principal_components.flatten()
 
 
-def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations2", "Reward", "GoalsVVal", "GoalsStepReward", "ActionsReward"]):
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations0", "Reward", "GoalsVVal", "GoalsStepReward", "ActionsReward"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -158,7 +158,7 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         y = ep_df[column_name].values
         line = ax.plot(x, y, lw=0.5, c=color, label=column_name)
         if show_scatter:
-            scatter =  ax.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=2, vmin=0, vmax=(num_goals - 1))
+            scatter =  ax.scatter(x, y, c=ep_df['Goal'].values, cmap=colormap, marker='o', s=5, vmin=0, vmax=(num_goals - 1))
         else:
             scatter = None
 
