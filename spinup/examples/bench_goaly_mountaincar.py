@@ -10,7 +10,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     eg = ExperimentGrid(name='goaly-bench')
-    eg.add('env_name', 'MountainCarContinuous-v0', '', True)
+    eg.add('env_name', 'MountainCar-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 100)
     eg.add('steps_per_epoch', 4000)
