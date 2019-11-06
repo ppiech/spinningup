@@ -6,6 +6,7 @@ import re
 import math
 
 import matplotlib.pyplot as plt
+import matplotlib.lines
 import matplotlib.cm as cm
 from matplotlib.animation import FuncAnimation
 
@@ -36,7 +37,7 @@ def principal_components(df, features):
     return principal_components.flatten()
 
 
-def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations0", "Reward", "GoalsVVal", "GoalsStepReward", "ActionsReward"]):
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations0", "Reward", "GoalDiscount", "GoalsStepReward"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -146,6 +147,12 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
     def plot_sccatter_traces(start, end):
         scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals_series[start:end].values,
                                     s=rewards_scaled[start:end], cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
+
+        goal_markers = []
+        for goal in range(num_goals):
+            goal_markers.append(matplotlib.lines.Line2D([], [], color=goal_color(goal), marker='o', linestyle='None',
+                                                        markersize=5, label=str(goal)))
+        legend = plt.legend(handles=goal_markers, fontsize='small', bbox_to_anchor=(-0.05, 1.0))
         return [scatter]
 
     def plot_value_over_time(ax, start, end, column_name, color, show_scatter=True):
