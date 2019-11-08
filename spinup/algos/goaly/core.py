@@ -121,7 +121,7 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
     with tf.variable_scope('v'):
         if x_value_with_action:
             x = tf.concat([x, pi], 1)
-        v = tf.squeeze(mlp(x, list(hidden_sizes)+[1], activation, None), axis=1)
+        v = tf.squeeze(mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[1], activation, None), axis=1)
     return pi, logp, logp_pi, v
 
 """
@@ -226,14 +226,18 @@ def get_goal_discount(goal_discounts, goal):
         else:
             octave_discount = 1 - goal_discounts[i]
         # treat all discounts equally in clac:
-        discount += octave_discount / num_discounts
-    return discount * 2
+        #discount += octave_discount / num_discounts
+        #debug: put discounts on a graduated scale
+        discount += octave_discount / (2**(num_discounts - i))
+
+    return discount
 
 """
 For goal-discounts 0.5% is the mid-point and represents neutral.  If discount moves towards 0 or 1, it causes a
 corresponding goal to be discounted towards 0.
 """
 def update_goal_discounts(goal_discounts, goal, discount_rate):
+    updated_discounts = []
     for i in range(0, len(goal_discounts)):
         if goal_discounts[i] < 0.5:
             goal_discount_value = goal_discounts[i] * discount_rate
@@ -241,6 +245,8 @@ def update_goal_discounts(goal_discounts, goal, discount_rate):
             goal_discount_value = (1 - goal_discounts[i]) * discount_rate
 
         if goal & (1 << i):
-            goal_discounts[i] -= goal_discount_value
+            updated_discounts.append(max(goal_discounts[i] - goal_discount_value, 0.01))
         else:
-            goal_discounts[i] += goal_discount_value
+            updated_discounts.append(min(goal_discounts[i] + goal_discount_value, 0.99))
+
+    return np.array(updated_discounts)

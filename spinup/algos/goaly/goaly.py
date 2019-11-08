@@ -70,7 +70,7 @@ class PPOBuffer:
 
         # the next two lines implement GAE-Lambda advantage calculation
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
-        self.adv_buf[path_slice] = core.discount_cumsum(deltas, self.gamma * self.lam)
+        self.adv_buf[path_slice] = core.discount_cumsum(deltas, self.gamma * self.lam) + step_rews
 
         # the next line computes rewards-to-go, to be targets for the value function
         rew_cumsum = core.discount_cumsum(rews, self.gamma)[:-1]
@@ -91,7 +91,7 @@ class PPOBuffer:
         # the next two lines implement the advantage normalization trick
         adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
-        return [self.adv_buf, self.ret_buf, self.y_logp_buf]
+        return [self.adv_buf, self.ret_buf, self.y_logp_buf], adv_mean
 
 class ObservationsActionsAndGoalsBuffer:
     """
@@ -171,7 +171,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=5, goal_error_base=1, goal_discount_rate=0.2,
+        goal_octaves=5, goal_error_base=1, goal_discount_rate=0.02,
         goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -180,7 +180,7 @@ def goaly(
         # Inverse model
         train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
-        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=20):
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=10):
     """
 
     Args:
@@ -404,8 +404,12 @@ def goaly(
 
         # Prepare PPO training inputs
         inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], trajectory_buf.get())}
-        inputs.update({k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_buf.get())})
-        inputs.update({k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_buf.get())})
+
+        actions_ppo_inputs, actions_adv_mean = actions_ppo_buf.get()
+        inputs.update({k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_inputs)})
+
+        goals_ppo_inputs, goals_adv_mean = goals_ppo_buf.get()
+        inputs.update({k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_inputs)})
 
         # Training
         def train_ppo(train_iters, train_pi, approx_kl, target_kl):
@@ -448,6 +452,7 @@ def goaly(
         logger.store(LossActionsV=actions_v_l_old)
         logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
         logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
+        logger.store(ActionsAdvantageMean=actions_adv_mean)
         logger.store(ActionsKL=actions_kl)
         logger.store(ActionsEntropy=actions_ent)
         logger.store(ActionsClipFrac=actions_cf)
@@ -455,6 +460,7 @@ def goaly(
         logger.store(LossGoalsV=goals_v_l_old)
         logger.store(DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old))
         logger.store(DeltaLossGoalsV=(goals_v_l_new - goals_v_l_old))
+        logger.store(GoalsAdvantageMean=goals_adv_mean)
         logger.store(GoalsKL=goals_kl)
         logger.store(GoalsEntropy=goals_ent)
         logger.store(GoalsClipFrac=goals_cf)
@@ -486,7 +492,7 @@ def goaly(
         # logger.storeOne("Goal{}Reward".format(goal), reward)
         logger.store(GoalPathLen=actions_ppo_buf.path_len())
 
-    def log_trace_step(epoch, episode, observations, actions, goal, reward, goals_v_t, goals_step_reward_v, actions_reward_v):
+    def log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t, goals_step_reward_v, actions_reward_v, goal_discounts):
         if episode % trace_freq == 0:
             traces_logger.log_tabular('Epoch', epoch)
             traces_logger.log_tabular('Episode', episode)
@@ -502,6 +508,7 @@ def goaly(
             traces_logger.log_tabular('GoalsVVal', goals_v_t)
             traces_logger.log_tabular('GoalsStepReward', goals_step_reward_v)
             traces_logger.log_tabular('ActionsReward', actions_reward_v)
+            traces_logger.log_tabular('GoalDiscount', goal_discount)
 
             traces_logger.dump_tabular(file_only=True)
 
@@ -513,7 +520,7 @@ def goaly(
         logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPreictionError=forward_prediction_error)
         return stability
 
-    def handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len, stability, goal_discount):
+    def handle_episode_termination(episode, goal, prev_goal, observations, goal_discounts, reward, done, ep_ret, ep_len, stability, goal_discount):
         terminal = done or (ep_len == max_ep_len)
         if terminal or (t==local_steps_per_epoch-1):
             episode += 1
@@ -524,7 +531,9 @@ def goaly(
                 last_actions_val = actions_reward(reward, goal_discount, stability)
                 last_goals_val = goals_step_reward(reward, goal_discount, stability) + reward
             else:
-                last_actions_val, last_goals_val = sess.run([actions_v, goals_v], feed_dict={x_ph: observations.reshape(1,-1)})
+                last_actions_val, last_goals_val = \
+                    sess.run([actions_v, goals_v],
+                             feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal], goal_discounts_ph: goal_discounts.reshape(1, -1)})
 
             actions_ppo_buf.finish_path(last_actions_val)
             goals_ppo_buf.finish_path(last_goals_val)
@@ -537,9 +546,12 @@ def goaly(
         else:
             # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
             # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
+
             if goal != prev_goal:
                 logger.store(GoalPathLen=actions_ppo_buf.path_len())
-                last_actions_val = actions_reward(reward, goal_discount, stability) + reward
+                last_actions_val = actions_reward(reward, goal_discount, stability)
+                # debug: get last path value from values model
+                # last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
                 actions_ppo_buf.finish_path(last_actions_val)
 
         return episode, observations, reward, done, ep_ret, ep_len
@@ -579,11 +591,16 @@ def goaly(
             actions = actions[0]
             goals_v_t = goals_v_t[0]
 
+            goal_discount = core.get_goal_discount(goal_discounts, goal)
+            # print ("discount = {}, goal = {}, discounts = {}".format(goal_discount, goal, goal_discounts))
+            logger.store(GoalDiscount=goal_discount)
+
             goals_step_reward_v = goals_step_reward(reward, goal_discount, stability)
             actions_reward_v = actions_reward(reward, goal_discount, stability)
             store_training_step(observations, goal, goals_step_reward_v, goal_discounts, actions, actions_reward_v, reward,
                                 goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
-            log_trace_step(epoch, episode, observations, actions, goal, reward, goals_v_t, goals_step_reward_v, actions_reward_v)
+            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t,
+                           goals_step_reward_v, actions_reward_v, goal_discounts)
 
             new_observations, reward, done, _ = env.step(actions)
 
@@ -591,18 +608,13 @@ def goaly(
             observations = new_observations
 
             # Calculate goal reward
-            core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
-            goal_discount = core.get_goal_discount(goal_discounts, goal)
-            logger.store(GoalDiscount=goal_discount)
+            goal_discounts = core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
 
             ep_ret += reward
             ep_len += 1
 
-            # debug Suppress end of the episode
-            # done = False
-
             episode, observations, reward, done, ep_ret, ep_len = \
-                handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len, stability, goal_discount)
+                handle_episode_termination(episode, goal, prev_goal, observations, goal_discounts, reward, done, ep_ret, ep_len, stability, goal_discount)
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
@@ -628,8 +640,9 @@ def goaly(
         # logger.log_tabular('DeltaLossGoalsPi', average_only=True)
         logger.log_tabular('LossGoalsV', average_only=True)
         # logger.log_tabular('DeltaLossGoalsV', average_only=True)
-        logger.log_tabular('GoalsVVals', with_min_and_max=True)
+        logger.log_tabular('GoalsVVals', average_only=True)
         logger.log_tabular('GoalsEntropy', average_only=True)
+        logger.log_tabular('GoalsAdvantageMean', average_only=True)
         logger.log_tabular('GoalsKL', average_only=True)
         logger.log_tabular('GoalsClipFrac', average_only=True)
         logger.log_tabular('GoalsStopIter', average_only=True)
@@ -637,8 +650,9 @@ def goaly(
         # logger.log_tabular('DeltaLossActionsPi', average_only=True)
         logger.log_tabular('LossActionsV', average_only=True)
         # logger.log_tabular('DeltaLossActionsV', average_only=True)
-        logger.log_tabular('ActionsVVals', with_min_and_max=True)
+        logger.log_tabular('ActionsVVals', average_only=True)
         logger.log_tabular('ActionsEntropy', average_only=True)
+        logger.log_tabular('ActionsAdvantageMean', average_only=True)
         logger.log_tabular('ActionsKL', average_only=True)
         logger.log_tabular('ActionsClipFrac', average_only=True)
         logger.log_tabular('ActionsStopIter', average_only=True)
