@@ -335,6 +335,7 @@ def goaly(
 
     # when calculating goal error for stability reward, compare numerical goal value
     inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
+
     # old method:
     #inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
 
@@ -440,12 +441,11 @@ def goaly(
         # Log changes from update
         actions_pi_l_new, actions_v_l_new,  actions_kl, actions_cf, \
             goals_pi_l_new, goals_v_l_new, goals_kl, goals_cf, \
-            inverse_loss_new,a_predicted_val, goals_predicted_val, \
-            forward_loss_new = \
+            inverse_loss_new, forward_loss_new = \
             sess.run([
                 actions_pi_loss, actions_v_loss, actions_approx_kl, actions_clipfrac, \
                 goals_pi_loss, goals_v_loss, goals_approx_kl, goals_clipfrac, \
-                inverse_loss, a_predicted, goals_predicted, forward_loss],
+                inverse_loss, forward_loss],
                 feed_dict=inputs)
 
         logger.store(LossActionsPi=actions_pi_l_old)
@@ -543,16 +543,16 @@ def goaly(
                 logger.store(EpRet=ep_ret, EpLen=ep_len)
 
             observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-        else:
+        # else:
             # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
             # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
 
-            if goal != prev_goal:
-                logger.store(GoalPathLen=actions_ppo_buf.path_len())
-                last_actions_val = actions_reward(reward, goal_discount, stability)
-                # debug: get last path value from values model
-                # last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
-                actions_ppo_buf.finish_path(last_actions_val)
+            # if goal != prev_goal:
+            #     logger.store(GoalPathLen=actions_ppo_buf.path_len())
+            #     last_actions_val = actions_reward(reward, goal_discount, stability)
+            #     # debug: get last path value from values model
+            #     # last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
+            #     actions_ppo_buf.finish_path(last_actions_val)
 
         return episode, observations, reward, done, ep_ret, ep_len
 
