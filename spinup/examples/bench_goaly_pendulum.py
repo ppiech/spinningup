@@ -14,7 +14,7 @@ if __name__ == '__main__':
     eg = ExperimentGrid(name='ppo-bench')
     eg.add('env_name', 'Pendulum-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
-    eg.add('epochs', 1000)
+    eg.add('epochs', 200)
     eg.add('steps_per_epoch', 1000)
     eg.add('ac_kwargs:hidden_sizes', [(32, 32)], 'hid')
     eg.add('ac_kwargs:activation', [tf.nn.relu], '')
