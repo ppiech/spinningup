@@ -178,9 +178,9 @@ def goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        train_inverse_iters=80, inverse_lr=1e-2,
+        train_inverse_iters=800, inverse_lr=1e-2,
         # etc.
-        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=10):
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=20):
     """
 
     Args:
@@ -301,7 +301,7 @@ def goaly(
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
     trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch)
-    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*5)
+    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*10)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -314,18 +314,18 @@ def goaly(
 
     inverse_action_diff = tf.reduce_mean(tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff'), axis=-1)
 
-    inverse_action_loss = tf.reduce_mean(inverse_action_diff**2, name='inverse_action_loss') # For training inverse model
-    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_inverse, tf.float32) - goals_predicted_logits) / num_goals, name='inverse_goal_diff', axis=-1)
+    inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
+    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals), axis=-1, name='inverse_goal_diff')
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
     # if isinstance(env.action_space, Discrete):
     #     inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
-    inverse_goal_loss = tf.reduce_mean(inverse_goal_diff**2 * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
-    # inverse_goal_loss = tf.reduce_mean((inverse_goal_diff**2), name='inverse_goal_loss')
-    inverse_loss = inverse_action_loss + inverse_goal_loss
+    # inverse_goal_loss = tf.reduce_mean(inverse_goal_diff**2 * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
+    inverse_goal_loss = tf.reduce_mean((tf.cast(goals_inverse - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
+    # inverse_loss = inverse_action_loss + inverse_goal_loss
     # debug: isolate goal loss
-    # inverse_loss = inverse_goal_loss
+    inverse_loss = inverse_goal_loss + inverse_action_loss
 
     # Errors used for calculating return after each step.
     # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
@@ -334,7 +334,7 @@ def goaly(
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
-    inverse_goal_error = tf.abs(tf.cast(goals_inverse, tf.float32) - goals_predicted) / num_goals
+    inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
 
     # old method:
     #inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
@@ -376,7 +376,10 @@ def goaly(
     train_goals_v = MpiAdamOptimizer(learning_rate=goals_vf_lr).minimize(goals_v_loss)
     train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
     train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
-    train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
+    # train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
+    # debug: train actions and goals inverse separately
+    train_actions_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_action_loss)
+    train_goals_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_goal_loss)
     train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(forward_loss)
 
     sess = tf.Session()
@@ -393,15 +396,17 @@ def goaly(
         # Train inverse and forward
         inverse_buf.append(trajectory_buf)
         inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
-        inverse_loss_old  = sess.run([inverse_loss], feed_dict=inverse_inputs)
+        inverse_loss_old  = sess.run([inverse_goal_loss], feed_dict=inverse_inputs)
         for _ in range(train_inverse_iters):
-            sess.run(train_inverse, feed_dict=inverse_inputs)
+            sess.run(train_actions_inverse, feed_dict=inverse_inputs)
+        for _ in range(train_inverse_iters):
+            sess.run(train_goals_inverse, feed_dict=inverse_inputs)
 
-        # Train inverse
+        # Train forward
         inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
         forward_loss_old  = sess.run([forward_loss], feed_dict=inverse_inputs)
-        for _ in range(1):
-            sess.run(train_forward, feed_dict=inverse_inputs)
+        # for _ in range(1):
+        #     sess.run(train_forward, feed_dict=inverse_inputs)
 
         # Prepare PPO training inputs
         inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], trajectory_buf.get())}
@@ -523,9 +528,9 @@ def goaly(
         stability, action_error, goal_error, forward_prediction_error, goals_predicted_v = \
             sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error, goals_predicted],
                       feed_dict={x_ph: x, actions_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
-        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error[0], ForwardPreictionError=forward_prediction_error)
+        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPreictionError=forward_prediction_error)
 
-        return stability, action_error, goal_error[0], forward_prediction_error, int(goals_predicted_v[0])
+        return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_v[0])
 
     def handle_episode_termination(episode, goal, prev_goal, observations, goal_discounts, reward, done, ep_ret, ep_len, stability, goal_discount):
         terminal = done or (ep_len == max_ep_len)
