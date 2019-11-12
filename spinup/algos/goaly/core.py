@@ -154,15 +154,19 @@ def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=
         actions_output_activation=None
 
     goals_inverse = tf.slice(goals, [0], [inverse_input_size - 1])
-    goals_inverse_input = tf.one_hot(goals_inverse, num_goals)
+
+    # debug: use a scalar instead of one-hot
+    # goals_inverse_input = tf.one_hot(goals_inverse, num_goals)
+    goals_inverse_input = goals_inverse
 
     num_actions = a_inverse.get_shape().as_list()[-1]
 
     hidden_x = hidden(tf.concat([x_prev, x_inverse], 1), list(hidden_sizes)+[num_actions + num_goals], activation)
     action_logits = mlp(hidden_x,[num_actions], activation, actions_output_activation)
-    goals_logits = mlp(hidden_x, [num_goals], activation, tf.sigmoid)
+    goals_logits = mlp(hidden_x, [1], activation, tf.nn.relu)
 
-    goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
+    # goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
+    goals_predicted = goals_logits[0]
 
     return a_inverse, goals_inverse_input, action_logits, goals_logits, goals_predicted
 

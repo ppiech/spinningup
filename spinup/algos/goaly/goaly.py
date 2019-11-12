@@ -315,7 +315,7 @@ def goaly(
     inverse_action_diff = tf.reduce_mean(tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff'), axis=-1)
 
     inverse_action_loss = tf.reduce_mean(inverse_action_diff**2, name='inverse_action_loss') # For training inverse model
-    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals, name='inverse_goal_diff'), axis=-1)
+    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_inverse, tf.float32) - goals_predicted_logits) / num_goals, name='inverse_goal_diff', axis=-1)
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
@@ -334,7 +334,7 @@ def goaly(
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
-    inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
+    inverse_goal_error = tf.abs(tf.cast(goals_inverse, tf.float32) - goals_predicted) / num_goals
 
     # old method:
     #inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
@@ -471,7 +471,7 @@ def goaly(
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-    goal, stability, goal_discount, discounted_stability = 0, 0, 0, 0
+    goal, stability, action_error, goal_error, forward_prediction_error, goal_discount, discounted_stability, goal_predicted_v = 0, 0, 0, 0, 0, 0, 0, 0
 
     ep_obs = [[]]
     episode = 0
@@ -492,7 +492,9 @@ def goaly(
         # logger.storeOne("Goal{}Reward".format(goal), reward)
         logger.store(GoalPathLen=actions_ppo_buf.path_len())
 
-    def log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t, goals_step_reward_v, actions_reward_v, goal_discounts):
+    def log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t, \
+                       goals_step_reward_v, actions_reward_v, goal_discounts, action_error, goal_error, \
+                       forward_prediction_error, goals_predicted_v):
         if episode % trace_freq == 0:
             traces_logger.log_tabular('Epoch', epoch)
             traces_logger.log_tabular('Episode', episode)
@@ -505,20 +507,25 @@ def goaly(
                     traces_logger.log_tabular('Actions{}'.format(i), actions[i])
             traces_logger.log_tabular('Reward', reward)
             traces_logger.log_tabular('Goal', goal)
+            traces_logger.log_tabular('GoalPredicted', goals_predicted_v)
             traces_logger.log_tabular('GoalsVVal', goals_v_t)
             traces_logger.log_tabular('GoalsStepReward', goals_step_reward_v)
             traces_logger.log_tabular('ActionsReward', actions_reward_v)
             traces_logger.log_tabular('GoalDiscount', goal_discount)
+            traces_logger.log_tabular('ActionError', action_error)
+            traces_logger.log_tabular('GoalError', goal_error)
+            traces_logger.log_tabular('ForwardPredictionError', forward_prediction_error)
 
             traces_logger.dump_tabular(file_only=True)
 
     def calculate_stability(observations, new_observations, actions, goal):
         x = np.array([observations, new_observations])
-        stability, action_error, goal_error, forward_prediction_error = \
-            sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error],
+        stability, action_error, goal_error, forward_prediction_error, goals_predicted_v = \
+            sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error, goals_predicted],
                       feed_dict={x_ph: x, actions_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
-        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPreictionError=forward_prediction_error)
-        return stability
+        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error[0], ForwardPreictionError=forward_prediction_error)
+
+        return stability, action_error, goal_error[0], forward_prediction_error, int(goals_predicted_v[0])
 
     def handle_episode_termination(episode, goal, prev_goal, observations, goal_discounts, reward, done, ep_ret, ep_len, stability, goal_discount):
         terminal = done or (ep_len == max_ep_len)
@@ -599,12 +606,16 @@ def goaly(
             actions_reward_v = actions_reward(reward, goal_discount, stability)
             store_training_step(observations, goal, goals_step_reward_v, goal_discounts, actions, actions_reward_v, reward,
                                 goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
-            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t,
-                           goals_step_reward_v, actions_reward_v, goal_discounts)
 
             new_observations, reward, done, _ = env.step(actions)
 
-            stability = calculate_stability(observations, new_observations, actions, goal)
+            stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = \
+                calculate_stability(observations, new_observations, actions, goal)
+
+            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t,
+                           goals_step_reward_v, actions_reward_v, goal_discounts, action_error, goal_error,
+                           forward_prediction_error, goal_predicted_v)
+
             observations = new_observations
 
             # Calculate goal reward

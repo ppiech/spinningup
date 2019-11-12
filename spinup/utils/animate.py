@@ -37,7 +37,7 @@ def principal_components(df, features):
     return principal_components.flatten()
 
 
-def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations0", "Reward", "GoalDiscount", "GoalsStepReward"]):
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations0", "Reward", "GoalError"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -55,10 +55,12 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
     unique_episodes = set(df['Episode'])
 
     goals = df.loc[:,['Goal']].values.flatten()
-    rewards_scaled = MinMaxScaler((1, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
+    rewards_scaled = MinMaxScaler((5, 40)).fit_transform(df.loc[:,['Reward']].values).flatten()
 
     goals_series = df['Goal']
     goals_runs_starts = goals_series.loc[goals_series.shift() != goals_series].index
+
+    goals_predicted_series = df['GoalPredicted']
 
     episodes_series = df['Episode']
     episode_starts = episodes_series.loc[episodes_series.shift() != episodes_series]
@@ -106,7 +108,8 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
 
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
-        plots.extend(plot_sccatter_traces(episode_start, episode_end))
+        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values))
+        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, 0.5))
 
         ax_charts[0].set(xlim=(episode_start, episode_end))
         colors = ['r', 'b', 'g', 'y', 'm', 'c']
@@ -144,9 +147,10 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
             plot.remove()
         plots.clear()
 
-    def plot_sccatter_traces(start, end):
-        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goals_series[start:end].values,
-                                    s=rewards_scaled[start:end], cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
+    def plot_sccatter_traces(start, end, goal_values, scale_factor=1.0):
+        scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goal_values,
+                                    s=rewards_scaled[start:end]*scale_factor, cmap=colormap, marker='o',
+                                    vmin=0, vmax=(num_goals - 1))
 
         goal_markers = []
         for goal in range(num_goals):
