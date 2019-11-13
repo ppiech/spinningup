@@ -149,7 +149,7 @@ class ObservationsActionsAndGoalsBuffer:
 
         for i in range(buf_len):
             if self.ptr == self.max_size:
-                insert_at = np.random.randint(0, buf_len)
+                insert_at = np.random.randint(0, self.max_size)
             else:
                 insert_at = self.ptr
                 self.ptr += 1
