@@ -109,7 +109,7 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
         plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values))
-        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, 0.5))
+        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, 0.3))
 
         ax_charts[0].set(xlim=(episode_start, episode_end))
         colors = ['r', 'b', 'g', 'y', 'm', 'c']
