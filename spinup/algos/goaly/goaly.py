@@ -149,7 +149,7 @@ class ObservationsActionsAndGoalsBuffer:
 
         for i in range(buf_len):
             if self.ptr == self.max_size:
-                insert_at = np.random.randint(0, buf_len)
+                insert_at = np.random.randint(0, self.max_size)
             else:
                 insert_at = self.ptr
                 self.ptr += 1
@@ -180,7 +180,7 @@ def goaly(
         # Inverse model
         train_inverse_iters=800, inverse_lr=1e-2,
         # etc.
-        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=20):
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
 
     Args:
@@ -301,7 +301,7 @@ def goaly(
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
     trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch)
-    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*10)
+    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*5)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -330,7 +330,7 @@ def goaly(
     # Errors used for calculating return after each step.
     # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
     # towards small amplitude actions.
-    inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) / a_range), 1e-6)
+    inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) / a_range), 1e-4)
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
