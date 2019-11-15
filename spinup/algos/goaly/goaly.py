@@ -334,7 +334,7 @@ def goaly(
     # Errors used for calculating return after each step.
     # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
     # towards small amplitude actions.
-    inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) / a_range), 1e-4)
+    inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) * 10 / a_range), 1e-4)
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
@@ -374,7 +374,7 @@ def goaly(
     stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
     # stability_reward = 2 - inverse_action_error - inverse_goal_error
     # debug: cap stability reward
-    stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 10.0), -10.0)
+    stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
@@ -588,7 +588,7 @@ def goaly(
         # r = goal_discount * (actions_ppo_buf.path_len())
         # r = 0
         r = goal_discount * (stability)
-        logger.store(GoalsReward=r)
+        logger.store(GoalsStepReward=r)
         return r
 
         # return reward + goal_discount * (stability + np.sqrt(actions_ppo_buf.path_len() + 1))
@@ -657,7 +657,7 @@ def goaly(
         logger.log_tabular('StabilityGoalError', average_only=True)
         logger.log_tabular('ForwardPreictionError', average_only=True)
         logger.log_tabular('GoalDiscount', average_only=True)
-        logger.log_tabular('GoalsReward', average_only=True)
+        logger.log_tabular('GoalsStepReward', average_only=True)
         logger.log_tabular('ActionsReward', average_only=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
         logger.log_tabular('LossGoalsPi', average_only=True)
