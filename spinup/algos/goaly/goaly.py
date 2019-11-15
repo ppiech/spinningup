@@ -102,17 +102,19 @@ class ObservationsActionsAndGoalsBuffer:
 
     def __init__(self, obs_dim, goal_octaves, act_dim, size):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
+        self.new_obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.goals_buf = np.zeros(size , dtype=np.float32)
         self.goal_discounts_buf = np.zeros(core.combined_shape(size, goal_octaves), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.ptr, self.max_size = 0, size
 
-    def store(self, obs, goal, goal_discounts, act):
+    def store(self, obs, new_obs, goal, goal_discounts, act):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
+        self.new_obs_buf[self.ptr] = new_obs
         self.goals_buf[self.ptr] = goal
         self.goal_discounts_buf[self.ptr] = goal_discounts
         self.act_buf[self.ptr] = act
@@ -126,9 +128,10 @@ class ObservationsActionsAndGoalsBuffer:
         """
 
         if self.ptr == self.max_size:
-            to_return = [self.obs_buf, self.goals_buf, self.goal_discounts_buf, self.act_buf]
+            to_return = [self.obs_buf, self.new_obs_buf, self.goals_buf, self.goal_discounts_buf, self.act_buf]
         else:
-            to_return = [self.obs_buf[:self.ptr], self.goals_buf[:self.ptr], self.goal_discounts_buf[:self.ptr], self.act_buf[:self.ptr]]
+            to_return = [self.obs_buf[:self.ptr], self.new_obs_buf[:self.ptr], self.goals_buf[:self.ptr],
+                         self.goal_discounts_buf[:self.ptr], self.act_buf[:self.ptr]]
 
         if reset:
             self.ptr = 0
@@ -144,7 +147,7 @@ class ObservationsActionsAndGoalsBuffer:
         buffer, with the new data.
         """
 
-        new_obs, new_goals, new_goal_discounts, new_act = buffer.get(reset=False)
+        new_obs, new_new_obs, new_goals, new_goal_discounts, new_act = buffer.get(reset=False)
         buf_len = len(new_obs)
 
         for i in range(buf_len):
@@ -155,6 +158,7 @@ class ObservationsActionsAndGoalsBuffer:
                 self.ptr += 1
 
             self.obs_buf[insert_at] = new_obs[i]
+            self.new_obs_buf[insert_at] = new_new_obs[i]
             self.goal_discounts_buf[insert_at] = new_goal_discounts[i]
             self.goals_buf[insert_at] = new_goals[i]
             self.act_buf[insert_at] = new_act[i]
@@ -267,7 +271,7 @@ def goaly(
     act_dim = env.action_space.shape
 
     # Inputs to computation graph
-    x_ph, actions_ph = core.placeholders_from_env(env)
+    x_ph, x_next_ph, actions_ph = core.placeholders_from_env(env)
     actions_adv_ph = core.placeholder(None, "actions_adv_ph")
     actions_ret_ph = core.placeholder(None, "actions_ret_ph")
     actions_logp_old_ph = core.placeholder(None, "actions_logp_old_ph")
@@ -308,21 +312,21 @@ def goaly(
     logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
     # Inverse Dynamics Model
-    a_inverse, goals_inverse, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, actions_ph, goals_ph, num_goals)
+    a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals)
     a_range = core.action_range(env.action_space)
     a_as_float = tf.cast(a_inverse, tf.float32)
 
     inverse_action_diff = tf.reduce_mean(tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff'), axis=-1)
 
     inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
-    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_inverse - goals_predicted_logits, tf.float32) / num_goals), axis=-1, name='inverse_goal_diff')
+    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_one_hot - goals_predicted_logits, tf.float32) / num_goals), axis=-1, name='inverse_goal_diff')
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
     # if isinstance(env.action_space, Discrete):
     #     inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
     # inverse_goal_loss = tf.reduce_mean(inverse_goal_diff**2 * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
-    inverse_goal_loss = tf.reduce_mean((tf.cast(goals_inverse - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
+    inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
     # inverse_loss = inverse_action_loss + inverse_goal_loss
     # debug: isolate goal loss
     inverse_loss = inverse_goal_loss + inverse_action_loss
@@ -368,6 +372,7 @@ def goaly(
 
     # goaly reward
     stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+    # stability_reward = 2 - inverse_action_error - inverse_goal_error
     # debug: cap stability reward
     stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 10.0), -10.0)
 
@@ -395,21 +400,22 @@ def goaly(
     def update():
         # Train inverse and forward
         inverse_buf.append(trajectory_buf)
-        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
+        inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
         inverse_loss_old  = sess.run([inverse_goal_loss], feed_dict=inverse_inputs)
+
         for _ in range(train_inverse_iters):
             sess.run(train_actions_inverse, feed_dict=inverse_inputs)
         for _ in range(train_inverse_iters):
             sess.run(train_goals_inverse, feed_dict=inverse_inputs)
 
         # Train forward
-        inverse_inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
+        inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
         forward_loss_old  = sess.run([forward_loss], feed_dict=inverse_inputs)
         # for _ in range(1):
         #     sess.run(train_forward, feed_dict=inverse_inputs)
 
         # Prepare PPO training inputs
-        inputs = {k:v for k,v in zip([x_ph, goals_ph, goal_discounts_ph, actions_ph], trajectory_buf.get())}
+        inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, goal_discounts_ph, actions_ph], trajectory_buf.get())}
 
         actions_ppo_inputs, actions_adv_mean = actions_ppo_buf.get()
         inputs.update({k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_inputs)})
@@ -481,9 +487,9 @@ def goaly(
     ep_obs = [[]]
     episode = 0
 
-    def store_training_step(observations, goal, goals_step_reward, goal_discounts, actions, actions_reward_v, reward, \
-                            goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount):
-        trajectory_buf.store(observations, goal, goal_discounts, actions)
+    def store_training_step(observations, new_observations, goal, goals_step_reward, goal_discounts, actions,
+                            actions_reward_v, reward, goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount):
+        trajectory_buf.store(observations, new_observations, goal, goal_discounts, actions)
 
         # debug trace goal reward
         goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
@@ -524,10 +530,12 @@ def goaly(
             traces_logger.dump_tabular(file_only=True)
 
     def calculate_stability(observations, new_observations, actions, goal):
-        x = np.array([observations, new_observations])
         stability, action_error, goal_error, forward_prediction_error, goals_predicted_v = \
             sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error, goals_predicted],
-                      feed_dict={x_ph: x, actions_ph: np.array([actions, actions]), goals_ph: np.array([goal, goal])})
+                      feed_dict={x_ph: np.array([observations]),
+                                 x_next_ph: np.array([new_observations]),
+                                 actions_ph: np.array([actions]),
+                                 goals_ph: np.array([goal])})
         logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPreictionError=forward_prediction_error)
 
         return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_v[0])
@@ -609,25 +617,25 @@ def goaly(
 
             goals_step_reward_v = goals_step_reward(reward, goal_discount, stability)
             actions_reward_v = actions_reward(reward, goal_discount, stability)
-            store_training_step(observations, goal, goals_step_reward_v, goal_discounts, actions, actions_reward_v, reward,
-                                goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
 
-            new_observations, reward, done, _ = env.step(actions)
+            new_observations, new_reward, done, _ = env.step(actions)
+
+            store_training_step(observations, new_observations, goal, goals_step_reward_v, goal_discounts, actions, actions_reward_v, reward,
+                                goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount)
 
             stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = \
                 calculate_stability(observations, new_observations, actions, goal)
 
-            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, goals_v_t,
+            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, new_reward, goals_v_t,
                            goals_step_reward_v, actions_reward_v, goal_discounts, action_error, goal_error,
                            forward_prediction_error, goal_predicted_v)
 
             observations = new_observations
-
-            # Calculate goal reward
-            goal_discounts = core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
-
+            reward = new_reward
             ep_ret += reward
             ep_len += 1
+
+            goal_discounts = core.update_goal_discounts(goal_discounts, goal, goal_discount_rate)
 
             episode, observations, reward, done, ep_ret, ep_len = \
                 handle_episode_termination(episode, goal, prev_goal, observations, goal_discounts, reward, done, ep_ret, ep_len, stability, goal_discount)
