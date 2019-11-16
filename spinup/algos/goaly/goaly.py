@@ -320,14 +320,14 @@ def goaly(
     inverse_action_diff = tf.reduce_mean(tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff'), axis=-1)
 
     inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
-    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_one_hot - goals_predicted_logits, tf.float32) / num_goals), axis=-1, name='inverse_goal_diff')
+    inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_ph, tf.float32) - goals_predicted_logits) / num_goals, axis=-1, name='inverse_goal_diff')
 
     # Remember goals in little explored areas of state space (when action error is high), but even if action is well
     # known move the goal towards the new goal by a small amount
     # if isinstance(env.action_space, Discrete):
     #     inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
     # inverse_goal_loss = tf.reduce_mean(inverse_goal_diff**2 * (inverse_action_diff + goal_error_base), name='inverse_goal_loss')
-    inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
+    inverse_goal_loss = tf.reduce_mean((tf.cast(goals_ph, tf.float32) - goals_predicted_logits)**2, name='inverse_goal_loss')
     # inverse_loss = inverse_action_loss + inverse_goal_loss
     # debug: isolate goal loss
     inverse_loss = inverse_goal_loss + inverse_action_loss
