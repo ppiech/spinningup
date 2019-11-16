@@ -37,7 +37,8 @@ def principal_components(df, features):
     return principal_components.flatten()
 
 
-def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, values=["Observations0", "Reward", "GoalError"]):
+def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, show_predictions=False,
+                   values=["Observations0", "Reward", "GoalError"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -109,7 +110,8 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
         plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values))
-        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, 0.3))
+        if show_predictions:
+            plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, 0.2))
 
         ax_charts[0].set(xlim=(episode_start, episode_end))
         colors = ['r', 'b', 'g', 'y', 'm', 'c']
@@ -190,6 +192,7 @@ def main():
     parser.add_argument('logdir', nargs='*')
     parser.add_argument('--colormap', '-c', default='Spectral')
     parser.add_argument('--visible_episodes', '-v', type=int, default=5)
+    parser.add_argument('--show_predictions', '-p', action='store_true')
     parser.add_argument('--value', '-y', default='Reward', nargs='*')
     args = parser.parse_args()
     """
@@ -201,7 +204,7 @@ def main():
 
     """
 
-    make_animation(args.logdir, args.colormap, args.visible_episodes)
+    make_animation(args.logdir, args.colormap, args.visible_episodes, args.show_predictions)
 
     #TODO use args.value
     # make_animation(args.logdir, args.colormap, args.visible_episodes, args.value)
