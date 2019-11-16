@@ -371,8 +371,8 @@ def goaly(
         actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
     # goaly reward
-    stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
-    # stability_reward = 2 - inverse_action_error - inverse_goal_error
+    # stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+    stability_reward = 2 - inverse_action_error - inverse_goal_error
     # debug: cap stability reward
     stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
 
