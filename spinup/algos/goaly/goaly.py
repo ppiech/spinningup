@@ -182,7 +182,7 @@ def goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        train_inverse_iters=800, inverse_lr=1e-2,
+        train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -312,7 +312,8 @@ def goaly(
     logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
     # Inverse Dynamics Model
-    a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals)
+    a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = \
+        core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals, **ac_kwargs)
     a_range = core.action_range(env.action_space)
     a_as_float = tf.cast(a_inverse, tf.float32)
 

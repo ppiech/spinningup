@@ -18,4 +18,6 @@ if __name__ == '__main__':
     eg.add('steps_per_epoch', 1000)
     eg.add('ac_kwargs:hidden_sizes', [(32, 32)], 'hid')
     eg.add('ac_kwargs:activation', [tf.nn.relu], '')
+    eg.add('ac_kwargs:inverse_hidden_sizes', [(32, 32), (64, 64)], 'hid')
+    eg.add('ac_kwargs:inverse_activation', [tf.nn.relu, tf.nn.sigmoid], '')
     eg.run(goaly, num_cpu=args.cpu)
