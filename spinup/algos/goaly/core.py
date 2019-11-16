@@ -32,8 +32,9 @@ def placeholder_from_space(space, name):
 
 def placeholders_from_env(env):
     observations_ph = placeholder_from_space(env.observation_space, "observations")
+    next_observations_ph = placeholder_from_space(env.observation_space, "next_observations")
     actions_ph = placeholder_from_space(env.action_space, "actions")
-    return observations_ph, actions_ph
+    return observations_ph, next_observations_ph, actions_ph
 
 def hidden(x, hidden_sizes=(32,), activation=tf.tanh):
     for h in hidden_sizes[:-1]:
@@ -131,44 +132,42 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu):
+def inverse_model(env, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
-    x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
-    x_inverse = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
+    # x_next = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
+    # x_inverse = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
 
     if isinstance(env.action_space, Discrete):
-        # Trim the last action from input set
-        a_inverse = tf.slice(a, [0], [inverse_input_size - 1])
-
         # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
         # picking a value between two actions (like .5)
-        a_inverse = tf.one_hot(tf.cast(a_inverse, tf.int32), 2)
-        a_inverse_dim = np.prod(a_inverse.get_shape().as_list()[1:])
-        a_inverse = tf.reshape(a_inverse, [-1, a_inverse_dim])
+        a = tf.one_hot(tf.cast(a, tf.int32), 2)
+        a_dim = np.prod(a.get_shape().as_list()[1:])
+        a = tf.reshape(a, [-1, a_dim])
 
         actions_output_activation=tf.sigmoid
     else:
-        # Trim the last action from input set
-        a_inverse = tf.slice(a, [0, 0], [inverse_input_size - 1] + list(env.action_space.shape))
         actions_output_activation=None
 
-    goals_inverse = tf.slice(goals, [0], [inverse_input_size - 1])
-
     # debug: use a scalar instead of one-hot
-    # goals_inverse_input = tf.one_hot(goals_inverse, num_goals)
-    goals_inverse_input = goals_inverse
+    goals_one_hot = tf.one_hot(goals, num_goals)
+    # goals_inverse_input = goals_inverse
 
-    num_actions = a_inverse.get_shape().as_list()[-1]
+    num_actions = a.get_shape().as_list()[-1]
 
-    hidden_x = hidden(tf.concat([x_prev, x_inverse], 1), list(hidden_sizes)+[num_actions + num_goals], activation)
-    action_logits = mlp(hidden_x,[num_actions], activation, actions_output_activation)
-    goals_logits = mlp(hidden_x, [1], activation, tf.nn.relu)
+    x = tf.concat([x_next, x], 1)
+    # hidden_x = hidden(x, list(hidden_sizes)+[num_actions + num_goals], activation)
+    # action_logits = mlp(hidden_x, [num_actions], activation, actions_output_activation)
+    # goals_logits = mlp(hidden_x, [num_goals], activation, tf.sigmoid)
+    # debug: don't share hidden layers between goals and actions prediction
+    action_logits = mlp(x, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
+    goals_logits = mlp(x, list(hidden_sizes) + [num_goals], activation, tf.sigmoid)
+    # goals_logits = mlp(hidden_x, [1], activation, tf.nn.relu)
 
-    # goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
-    goals_predicted = goals_logits[0]
+    goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
+    # goals_predicted = goals_logits[0]
 
-    return a_inverse, goals_inverse_input, action_logits, goals_logits, goals_predicted
+    return a, goals_one_hot, action_logits, goals_logits, goals_predicted
 
 """
 Forward Dynamics
