@@ -339,7 +339,7 @@ def goaly(
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
-    inverse_goal_error = tf.reduce_mean(tf.abs(goals_predicted - tf.cast(goals_ph, tf.float32)) / num_goals)
+    inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
 
     # old method:
     #inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
