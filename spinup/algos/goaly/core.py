@@ -132,7 +132,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, x_next, a, goals, num_goals, inverse_hidden_sizes=(32,32), inverse_activation=tf.nn.relu):
+def inverse_model(env, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
     # x_next = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
@@ -161,11 +161,11 @@ def inverse_model(env, x, x_next, a, goals, num_goals, inverse_hidden_sizes=(32,
     # goals_logits = mlp(hidden_x, [num_goals], activation, tf.sigmoid)
     # debug: don't share hidden layers between goals and actions prediction
     action_logits = mlp(x, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
-    goals_logits = mlp(x, list(hidden_sizes) + [num_goals], activation, tf.sigmoid)
-    # goals_logits = mlp(hidden_x, [1], activation, tf.nn.relu)
+    # goals_logits = mlp(x, list(hidden_sizes) + [num_goals], activation, tf.sigmoid)
+    goals_logits = mlp(x, list(hidden_sizes) + [1], activation, tf.nn.relu)
 
-    goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
-    # goals_predicted = goals_logits[0]
+    # goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
+    goals_predicted = goals_logits[0]
 
     return a, goals_one_hot, action_logits, goals_logits, goals_predicted
 
