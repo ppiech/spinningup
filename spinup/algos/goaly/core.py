@@ -162,7 +162,7 @@ def inverse_model(env, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), act
     # debug: don't share hidden layers between goals and actions prediction
     action_logits = mlp(x, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
     # goals_logits = mlp(x, list(hidden_sizes) + [num_goals], activation, tf.sigmoid)
-    goals_logits = mlp(x, list(hidden_sizes) + [1], activation, tf.nn.relu)
+    goals_logits = mlp(x, list(hidden_sizes) + [1], activation, None)
 
     # goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
     goals_predicted = goals_logits[0]
