@@ -401,7 +401,7 @@ def goaly(
         # Train inverse and forward
         inverse_buf.append(trajectory_buf)
         inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
-        inverse_loss_old  = sess.run([inverse_goal_loss], feed_dict=inverse_inputs)
+        inverse_action_loss_old, inverse_goal_loss_old  = sess.run([inverse_action_loss, inverse_goal_loss], feed_dict=inverse_inputs)
 
         for _ in range(train_inverse_iters):
             sess.run(train_actions_inverse, feed_dict=inverse_inputs)
@@ -452,11 +452,11 @@ def goaly(
         # Log changes from update
         actions_pi_l_new, actions_v_l_new,  actions_kl, actions_cf, \
             goals_pi_l_new, goals_v_l_new, goals_kl, goals_cf, \
-            inverse_loss_new, forward_loss_new = \
+            inverse_action_loss_new, inverse_goal_loss_new, forward_loss_new = \
             sess.run([
                 actions_pi_loss, actions_v_loss, actions_approx_kl, actions_clipfrac, \
                 goals_pi_loss, goals_v_loss, goals_approx_kl, goals_clipfrac, \
-                inverse_loss, forward_loss],
+                inverse_action_loss, inverse_goal_loss, forward_loss],
                 feed_dict=inputs)
 
         logger.store(LossActionsPi=actions_pi_l_old)
@@ -475,10 +475,11 @@ def goaly(
         logger.store(GoalsKL=goals_kl)
         logger.store(GoalsEntropy=goals_ent)
         logger.store(GoalsClipFrac=goals_cf)
-        logger.store(LossInverse=inverse_loss_new)
-        logger.store(DeltaLossInverse=(inverse_loss_new - inverse_loss_old))
-        logger.store(LossForward=forward_loss_new)
-        logger.store(DeltaLossForward=(forward_loss_new - forward_loss_old))
+        logger.store(LossActionInverse=inverse_action_loss_new)
+        logger.store(DeltaLossActionInverse=(inverse_action_loss_new - inverse_action_loss_old))
+        logger.store(LossGoalInverse=inverse_goal_loss_new)
+        logger.store(DeltaLossGoalInverse=(inverse_goal_loss_new - inverse_goal_loss_old))        # logger.store(LossForward=forward_loss_new)
+        # logger.store(DeltaLossForward=(forward_loss_new - forward_loss_old))
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -655,7 +656,7 @@ def goaly(
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
-        logger.log_tabular('ForwardPreictionError', average_only=True)
+        # logger.log_tabular('ForwardPreictionError', average_only=True)
         logger.log_tabular('GoalDiscount', average_only=True)
         logger.log_tabular('GoalsStepReward', average_only=True)
         logger.log_tabular('ActionsReward', average_only=True)
@@ -680,8 +681,10 @@ def goaly(
         logger.log_tabular('ActionsKL', average_only=True)
         logger.log_tabular('ActionsClipFrac', average_only=True)
         logger.log_tabular('ActionsStopIter', average_only=True)
-        logger.log_tabular('LossInverse', average_only=True)
-        logger.log_tabular('DeltaLossInverse', average_only=True)
+        logger.log_tabular('LossActionInverse', average_only=True)
+        logger.log_tabular('DeltaLossActionInverse', average_only=True)
+        logger.log_tabular('LossGoalInverse', average_only=True)
+        logger.log_tabular('DeltaLossGoalInverse', average_only=True)
         logger.log_tabular('LossForward', average_only=True)
         logger.log_tabular('DeltaLossForward', average_only=True)
         # for goal_num in range(num_goals):
