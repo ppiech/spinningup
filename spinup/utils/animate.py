@@ -38,7 +38,7 @@ def principal_components(df, features):
 
 
 def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, show_predictions=False,
-                   values=["Observations0", "Reward", "GoalError"]):
+                   dont_scale_rewards=False, values=["Observations0", "Reward", "GoalError"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -109,9 +109,9 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
 
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
 
-        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values))
+        plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values, dont_scale_rewards))
         if show_predictions:
-            plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, 0.2))
+            plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, dont_scale_rewards, 0.2))
 
         ax_charts[0].set(xlim=(episode_start, episode_end))
         colors = ['r', 'b', 'g', 'y', 'm', 'c']
@@ -149,10 +149,14 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
             plot.remove()
         plots.clear()
 
-    def plot_sccatter_traces(start, end, goal_values, scale_factor=1.0):
+    def plot_sccatter_traces(start, end, goal_values, scale_rewards=False, scale_factor=1.0):
+        if dont_scale_rewards:
+            s = scale_factor * 20
+        else:
+            s = rewards_scaled[start:end]*scale_factor
+
         scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goal_values,
-                                    s=rewards_scaled[start:end]*scale_factor, cmap=colormap, marker='o',
-                                    vmin=0, vmax=(num_goals - 1))
+                                    s=s, cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
 
         goal_markers = []
         for goal in range(num_goals):
@@ -193,6 +197,7 @@ def main():
     parser.add_argument('--colormap', '-c', default='Spectral')
     parser.add_argument('--visible_episodes', '-v', type=int, default=5)
     parser.add_argument('--show_predictions', '-p', action='store_true')
+    parser.add_argument('--dont_scale_rewards', '-s', action='store_true')
     parser.add_argument('--value', '-y', default='Reward', nargs='*')
     args = parser.parse_args()
     """
@@ -204,7 +209,7 @@ def main():
 
     """
 
-    make_animation(args.logdir, args.colormap, args.visible_episodes, args.show_predictions)
+    make_animation(args.logdir, args.colormap, args.visible_episodes, args.show_predictions, args.dont_scale_rewards)
 
     #TODO use args.value
     # make_animation(args.logdir, args.colormap, args.visible_episodes, args.value)
