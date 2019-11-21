@@ -151,7 +151,7 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
 
     def plot_sccatter_traces(start, end, goal_values, scale_rewards=False, scale_factor=1.0):
         if dont_scale_rewards:
-            s = scale_factor * 20
+            s = scale_factor * 30
         else:
             s = rewards_scaled[start:end]*scale_factor
 
