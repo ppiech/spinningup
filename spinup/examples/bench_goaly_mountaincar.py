@@ -14,6 +14,7 @@ if __name__ == '__main__':
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 100)
     eg.add('steps_per_epoch', 4000)
+    eg.add('goal_octaves', 3)
     eg.add('ac_kwargs:hidden_sizes', [(32,)], 'hid')
     eg.add('ac_kwargs:activation', [tf.nn.relu], '')
     eg.run(goaly, num_cpu=args.cpu)

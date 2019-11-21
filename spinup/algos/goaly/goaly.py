@@ -175,7 +175,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=5, goal_error_base=1, goal_discount_rate=0.02,
+        goal_octaves=3, goal_error_base=1, goal_discount_rate=0.02,
         goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -317,7 +317,7 @@ def goaly(
     a_range = core.action_range(env.action_space)
     a_as_float = tf.cast(a_inverse, tf.float32)
 
-    inverse_action_diff = tf.reduce_mean(tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff'), axis=-1)
+    inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
 
     inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
     inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_one_hot - goals_predicted_logits, tf.float32) / num_goals), axis=-1, name='inverse_goal_diff')
@@ -334,12 +334,19 @@ def goaly(
 
     # Errors used for calculating return after each step.
     # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
-    # towards small amplitude actions.
-    inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) * 10 / a_range), 1e-4)
+    # towards small amplitude actions.  This doesn't apply to discrete action spaces, where a_predicted is a set of
+    # logits compared againt a_inverse that is a one-hot vector.
+    if isinstance(env.action_space, Discrete):
+        inverse_action_error_denominator = 1.0
+    else:
+        inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) * 10 / a_range), 1e-4)
+
+    print (inverse_action_diff)
+    print (inverse_action_error_denominator)
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
-    inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) / num_goals)
+    inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) * 2.0 / num_goals)
 
     # old method:
     #inverse_goal_error = tf.reduce_mean(inverse_goal_diff)
@@ -372,8 +379,8 @@ def goaly(
         actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
     # goaly reward
-    # stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
-    stability_reward = 2 - inverse_action_error - inverse_goal_error
+    stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+    # stability_reward = 2 - inverse_action_error - inverse_goal_error
     # debug: cap stability reward
     stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
 
