@@ -7,7 +7,7 @@ import numpy as np
 from spinup import EpochLogger
 from spinup.utils.logx import restore_tf_graph
 
-def load_policy(fpath, itr='last', deterministic=False):
+def load_policy(fpath, itr='last', deterministic=False, goal_octaves=5):
 
     # handle which epoch to load from
     if itr=='last':
@@ -31,7 +31,7 @@ def load_policy(fpath, itr='last', deterministic=False):
 
     # make function for producing an action given a single state
     def get_action(prev_goal, x):
-        goal = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:], model['goal_discounts_ph']: np.full((5), 0.5).reshape(1, -1) })
+        goal = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:], model['goal_discounts_ph']: np.full((goal_octaves), 0.5).reshape(1, -1) })
         # goal = np.array([12])
         action = sess.run(action_op, feed_dict={model['x']: x[None,:], model['goals_ph']: goal})[0]
         return goal, action
@@ -96,9 +96,11 @@ if __name__ == '__main__':
     parser.add_argument('--episodes', '-n', type=int, default=100)
     parser.add_argument('--norender', '-nr', action='store_true')
     parser.add_argument('--itr', '-i', type=int, default=-1)
+    parser.add_argument('--goal_octaves', '-o', type=int, default=4)
     parser.add_argument('--deterministic', '-d', action='store_true')
     args = parser.parse_args()
     env, get_action = load_policy(args.fpath,
                                   args.itr if args.itr >=0 else 'last',
-                                  args.deterministic)
+                                  args.deterministic,
+                                  args.goal_octaves)
     run_policy(env, get_action, args.len, args.episodes, not(args.norender))
