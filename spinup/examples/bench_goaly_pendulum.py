@@ -11,7 +11,7 @@ if __name__ == '__main__':
 
     print(args.num_runs)
 
-    eg = ExperimentGrid(name='ppo-bench')
+    eg = ExperimentGrid(name='goaly-bench')
     eg.add('env_name', 'Pendulum-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 200)

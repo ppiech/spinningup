@@ -182,7 +182,7 @@ def goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        inverse_kwargs=dict(), train_inverse_iters=80, inverse_lr=1e-2,
+        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-2,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -313,12 +313,11 @@ def goaly(
 
     # Inverse Dynamics Model
     a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = \
-        core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals, **inverse_kwargs)
+        core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals, split_action_and_goal_models, **inverse_kwargs)
     a_range = core.action_range(env.action_space)
     a_as_float = tf.cast(a_inverse, tf.float32)
 
     inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
-
     inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
     inverse_goal_diff = tf.reduce_mean(tf.abs(tf.cast(goals_one_hot - goals_predicted_logits, tf.float32) / num_goals), axis=-1, name='inverse_goal_diff')
 
@@ -389,10 +388,14 @@ def goaly(
     train_goals_v = MpiAdamOptimizer(learning_rate=goals_vf_lr).minimize(goals_v_loss)
     train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
     train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
-    # train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
-    # debug: train actions and goals inverse separately
-    train_actions_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_action_loss)
-    train_goals_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_goal_loss)
+
+
+    if split_action_and_goal_models:
+        # debug: train actions and goals inverse separately
+        train_actions_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_action_loss)
+        train_goals_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_goal_loss)
+    else:
+        train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
     train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(forward_loss)
 
     sess = tf.Session()
@@ -411,10 +414,15 @@ def goaly(
         inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
         inverse_action_loss_old, inverse_goal_loss_old  = sess.run([inverse_action_loss, inverse_goal_loss], feed_dict=inverse_inputs)
 
-        for _ in range(train_inverse_iters):
-            sess.run(train_actions_inverse, feed_dict=inverse_inputs)
-        for _ in range(train_inverse_iters):
-            sess.run(train_goals_inverse, feed_dict=inverse_inputs)
+        if split_action_and_goal_models:
+            for _ in range(train_inverse_iters):
+                sess.run(train_actions_inverse, feed_dict=inverse_inputs)
+            for _ in range(train_inverse_iters):
+                sess.run(train_goals_inverse, feed_dict=inverse_inputs)
+        else:
+            for _ in range(train_inverse_iters):
+                sess.run(train_inverse, feed_dict=inverse_inputs)
+
 
         # Train forward
         inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, goal_discounts_ph, actions_ph], inverse_buf.get(reset=False))}
