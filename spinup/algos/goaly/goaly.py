@@ -183,6 +183,8 @@ def goaly(
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
         inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-2,
+        # Reward Calculations
+        finish_action_path_on_new_goal=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -580,7 +582,7 @@ def goaly(
                 logger.store(EpRet=ep_ret, EpLen=ep_len)
 
             observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-        else:
+        elif finish_action_path_on_new_goal:
             # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
             # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
 
