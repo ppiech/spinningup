@@ -12,7 +12,7 @@ DIV_LINE_WIDTH = 50
 exp_idx = 0
 units = dict()
 
-def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1", smooth=1, **kwargs):
+def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1", smooth=1, show_legend="brief", **kwargs):
     if smooth > 1:
         """
         smooth data with moving window average.
@@ -30,7 +30,8 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
     if isinstance(data, list):
         data = pd.concat(data, ignore_index=True)
     sns.set(style="darkgrid", font_scale=1.5)
-    sns.tsplot(data=data, time=xaxis, value=value, unit="Unit", condition=condition, ci='sd', **kwargs)
+    # sns.tsplot(data=data, time=xaxis, value=value, unit="Unit", condition=condition, ci='sd', **kwargs)
+    sns.lineplot(data=data, x=xaxis, y=value, hue=condition, legend=show_legend, ci='sd', **kwargs)
     """
     If you upgrade to any version of Seaborn greater than 0.8.1, switch from
     tsplot to lineplot replacing L29 with:
@@ -39,7 +40,8 @@ def plot_data(data, xaxis='Epoch', value="AverageEpRet", condition="Condition1",
 
     Changes the colorscheme and the default legend style, though.
     """
-    plt.legend(loc='best').set_draggable(True)
+    if show_legend:
+        plt.legend(loc='best').set_draggable(True)
 
     """
     For the version of the legend used in the Spinning Up benchmarking page,
@@ -66,6 +68,7 @@ def get_datasets(logdir, condition=None, filename='progress.txt'):
     global exp_idx
     global units
     datasets = []
+    configs = []
     for root, _, files in os.walk(logdir):
         if filename in files:
             exp_name = None
@@ -96,7 +99,8 @@ def get_datasets(logdir, condition=None, filename='progress.txt'):
             if performance in exp_data:
                 exp_data.insert(len(exp_data.columns),'Performance',exp_data[performance])
             datasets.append(exp_data)
-    return datasets
+            configs.append(config)
+    return datasets, configs
 
 
 def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None, filename="progress.txt"):
@@ -141,24 +145,29 @@ def get_all_datasets(all_logdirs, legend=None, select=None, exclude=None, filena
         "Must give a legend title for each set of experiments."
 
     data = []
+    configs = []
     if legend:
         for log, leg in zip(logdirs, legend):
-            data += get_datasets(log, leg, filename=filename)
+            new_data, new_configs = get_datasets(log, leg, filename=filename)
+            data += new_data
+            configs += new_configs
     else:
         for log in logdirs:
-            data += get_datasets(log, filename=filename)
-    return data
+            new_data, new_configs = get_datasets(log, filename=filename)
+            data += new_data
+            configs += new_configs
+    return data, configs
 
 def make_plots(all_logdirs, legend=None, xaxis=None, values=None, count=False,
                font_scale=1.5, smooth=1, select=None, exclude=None, estimator='mean'):
 
-    data = get_all_datasets(all_logdirs, legend, select, exclude)
+    data, configs = get_all_datasets(all_logdirs, legend, select, exclude)
     values = values if isinstance(values, list) else [values]
     condition = 'Condition2' if count else 'Condition1'
     estimator = getattr(np, estimator)      # choose what to show on main curve: mean? max? min?
     for value in values:
         plt.figure()
-        plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
+        plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator, show_legend="brief")
     plt.show()
 
 def main():

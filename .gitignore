@@ -10,3 +10,4 @@ u1data/
 .DS_Store
 _build/
 env/
+.ipynb_checkpoints
