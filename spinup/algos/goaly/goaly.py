@@ -184,7 +184,7 @@ def goaly(
         # Inverse model
         inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-2,
         # Reward Calculations
-        finish_action_path_on_new_goal=False,
+        finish_action_path_on_new_goal=False, no_step_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -342,8 +342,6 @@ def goaly(
     else:
         inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) * 10 / a_range), 1e-4)
 
-    print (inverse_action_diff)
-    print (inverse_action_error_denominator)
     inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
     # when calculating goal error for stability reward, compare numerical goal value
@@ -510,10 +508,11 @@ def goaly(
                             actions_reward_v, reward, goals_v_t, goals_logp_t, stability, actions_v_t, goal_discount):
         trajectory_buf.store(observations, new_observations, goal, goal_discounts, actions)
 
-        # debug trace goal reward
-        goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
-        # debug no external reward
-        # goals_ppo_buf.store(0, goals_step_reward, goals_v_t, goals_logp_t)
+        if no_step_reward:
+            goals_ppo_buf.store(reward + goals_step_reward, 0, goals_v_t, goals_logp_t)
+        else:
+            goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
+
         actions_ppo_buf.store(actions_reward_v, 0, actions_v_t, actions_logp_t)
 
         logger.store(ActionsVVals=actions_v_t)

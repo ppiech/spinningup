@@ -19,6 +19,7 @@ if __name__ == '__main__':
     eg.add('goal_octaves', [2, 5])
     eg.add('goal_discount_rate', [0.01])
     eg.add('split_action_and_goal_models', [False], '')
+    eg.add('no_step_reward', [False, True], '')
     eg.add('finish_action_path_on_new_goal', [True], '')
     eg.add('ac_kwargs:hidden_sizes', [(32, 32)], 'hid')
     eg.add('ac_kwargs:activation', [tf.nn.relu], '')
