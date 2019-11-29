@@ -41,7 +41,8 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
                    dont_scale_rewards=False, values=["Observations0", "Reward", "GoalError"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
-    data = get_all_datasets(all_logdirs, filename="traces.txt")
+    data, configs = get_all_datasets(all_logdirs, filename="traces.txt")
+
     df = data[0]
 
     observation_features, action_features = observation_and_action_features(df)
