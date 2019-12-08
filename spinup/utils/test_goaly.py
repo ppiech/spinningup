@@ -31,7 +31,7 @@ def load_policy(fpath, itr='last', deterministic=False, goal_octaves=5):
 
     # make function for producing an action given a single state
     def get_action(prev_goal, x):
-        goal = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:], model['goal_discounts_ph']: np.full((goal_octaves), 0.5).reshape(1, -1) })
+        goal = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:], model['discounts_ph']: np.full((goal_octaves + 1), 0.5).reshape(1, -1) })
         # goal = np.array([12])
         action = sess.run(action_op, feed_dict={model['x']: x[None,:], model['goals_ph']: goal})[0]
         return goal, action

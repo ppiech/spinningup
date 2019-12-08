@@ -224,7 +224,7 @@ def update_reward_dicscounts(reward_discount, reward, discount_rate):
     else:
         reward_discount += discount
 
-def get_goal_discount(goal_discounts, goal):
+def get_goal_discount_value(goal_discounts, goal):
     discount = 0
     num_discounts = len(goal_discounts)
     for i in range(0, num_discounts):
@@ -257,3 +257,18 @@ def update_goal_discounts(goal_discounts, goal, discount_rate):
             updated_discounts.append(min(goal_discounts[i] + goal_discount_value, 0.99))
 
     return np.array(updated_discounts)
+
+def update_reward_discount(reward, discount, reward_min, reward_max, discount_target, discount_rate):
+    reward_min = min(reward_min, reward) if reward_min != None else reward
+    reward_max = max(reward_max, reward) if reward_max != None else reward
+
+    offset = (reward - reward_min) / max(reward_max - reward_min, 1e-5)
+
+    if offset < discount_target:
+        discount = min((discount_target - offset) * discount_rate + discount, 0.99)
+    else:
+        discount = max(discount - ((offset - discount_target) * discount_rate), 0.01)
+
+    # print("max = {}, min = {}, reward = {}, offset = {}, discount={}".format(reward_max, reward_min, reward, offset, discount))
+
+    return discount, reward_min, reward_max
