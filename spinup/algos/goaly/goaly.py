@@ -182,7 +182,7 @@ def goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-3,
+        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-3, invese_buffer_size=2,
         # Reward Calculations
         finish_action_path_on_new_goal=False, no_step_reward=False,
         # etc.
@@ -310,7 +310,7 @@ def goaly(
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
     trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch)
-    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*5)
+    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*invese_buffer_size)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
