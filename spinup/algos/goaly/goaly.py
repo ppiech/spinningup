@@ -184,7 +184,7 @@ def goaly(
         # Inverse model
         inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-3, invese_buffer_size=2,
         # Reward Calculations
-        finish_action_path_on_new_goal=False, no_step_reward=False,
+        finish_action_path_on_new_goal=False, no_step_reward=False, forward_error_for_stability_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -319,7 +319,9 @@ def goaly(
     # Inverse Dynamics Model
     a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = \
         core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals, split_action_and_goal_models, **inverse_kwargs)
-    a_range = core.action_range(env.action_space)
+    a_range = core.space_range(env.action_space)
+    o_range = core.space_range(env.observation_space)
+
     a_as_float = tf.cast(a_inverse, tf.float32)
 
     inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
@@ -355,9 +357,9 @@ def goaly(
 
     # Forward model
     is_action_space_discrete = isinstance(env.action_space, Discrete)
-    x_next, x_pred, a_input = core.forward_model(x_ph, actions_ph, env.action_space.shape, is_action_space_discrete)
+    x_pred = core.forward_model(x_ph, actions_ph, x_next_ph, is_action_space_discrete)
 
-    forward_diff = tf.abs(tf.cast(x_next, tf.float32) - x_pred, name='forward_diff')
+    forward_diff = tf.abs((tf.cast(x_ph, tf.float32) - x_pred) / o_range, name='forward_diff')
     forward_error = tf.reduce_mean(forward_diff, name="forward_error")
     forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
 
@@ -381,9 +383,14 @@ def goaly(
         actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
 
     # goaly reward
-    stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
-    # stability_reward = 2 - inverse_action_error - inverse_goal_error
-    # debug: cap stability reward
+
+    # by default use invese action error in stability reward
+    if forward_error_for_stability_reward:
+        stability_reward = 1 + 2*forward_error * inverse_goal_error - inverse_action_error - forward_error
+    else:
+        stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+
+    # cap stability reward
     stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
 
     # Optimizers
@@ -391,7 +398,6 @@ def goaly(
     train_goals_v = MpiAdamOptimizer(learning_rate=goals_vf_lr).minimize(goals_v_loss)
     train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
     train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
-
 
     if split_action_and_goal_models:
         # debug: train actions and goals inverse separately
@@ -430,8 +436,8 @@ def goaly(
         # Train forward
         inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, discounts_ph, actions_ph], inverse_buf.get(reset=False))}
         forward_loss_old  = sess.run([forward_loss], feed_dict=inverse_inputs)
-        # for _ in range(1):
-        #     sess.run(train_forward, feed_dict=inverse_inputs)
+        for _ in range(train_inverse_iters):
+            sess.run(train_forward, feed_dict=inverse_inputs)
 
         # Prepare PPO training inputs
         inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, discounts_ph, actions_ph], trajectory_buf.get())}
@@ -552,8 +558,8 @@ def goaly(
             traces_logger.dump_tabular(file_only=True)
 
     def calculate_stability(observations, new_observations, actions, goal):
-        stability, action_error, goal_error, forward_prediction_error, goals_predicted_v = \
-            sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error, goals_predicted],
+        stability, action_error, goal_error, forward_prediction_error, goals_predicted_v, x_pred_v = \
+            sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error, goals_predicted, x_pred],
                       feed_dict={x_ph: np.array([observations]),
                                  x_next_ph: np.array([new_observations]),
                                  actions_ph: np.array([actions]),
@@ -690,7 +696,7 @@ def goaly(
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
-        # logger.log_tabular('ForwardPreictionError', average_only=True)
+        logger.log_tabular('ForwardPreictionError', average_only=True)
         logger.log_tabular('GoalDiscount', average_only=True)
         logger.log_tabular('RewardDiscount', average_only=True)
         logger.log_tabular('GoalsStepReward', average_only=True)

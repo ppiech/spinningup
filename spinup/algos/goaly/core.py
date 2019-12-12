@@ -176,38 +176,27 @@ def inverse_model(env, x, x_next, a, goals, num_goals, split_action_and_goal_mod
 """
 Forward Dynamics
 """
-def forward_model(x, a, action_space_shape, is_action_space_discrete, hidden_sizes=(16,), activation=tf.nn.relu):
-    inverse_input_size = tf.shape(x)[0]
+def forward_model(x, a, x_next, is_action_space_discrete, hidden_sizes=(16,), activation=tf.nn.relu):
     features_shape = x.shape.as_list()[1:]
-    x_prev = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
-    x_next = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
 
     if is_action_space_discrete:
-        # Trim the last action from input set
-        a_input = tf.slice(a, [0], [inverse_input_size - 1])
-
         # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
         # picking a value between two actions (like .5)
-        a_input = tf.one_hot(tf.cast(a_input, tf.int32), 2)
-        a_input_dim = np.prod(a_input.get_shape().as_list()[1:])
-        a_input = tf.reshape(a_input, [-1, a_input_dim])
-    else:
-        # Trim the last action from input set
-        a_input = tf.slice(a, [0, 0], [inverse_input_size - 1] + list(action_space_shape))
+        a = tf.one_hot(tf.cast(a, tf.int32), 2)
+        a_dim = np.prod(a.get_shape().as_list()[1:])
+        a = tf.reshape(a, [-1, a_dim])
 
-    x_predicted = mlp(tf.concat([x_prev, a_input], 1), list(hidden_sizes)+features_shape, activation, None)
-
-    return x_next, x_predicted, a_input
+    return mlp(tf.concat([x, a], 1), list(hidden_sizes)+features_shape, activation, None)
 
 """
 Returns the high-low for action values, used to normalize action error in loss.
 """
-def action_range(action_space):
-    if isinstance(action_space, Discrete):
-        action_range = 1
+def space_range(space):
+    if isinstance(space, Discrete):
+        range = 1
     else:
-        action_range = action_space.high - action_space.low
-    return action_range
+        range = space.high - space.low
+    return range
 
 """
 Goal Calculations
