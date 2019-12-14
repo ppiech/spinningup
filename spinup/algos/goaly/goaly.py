@@ -5,7 +5,7 @@ import time
 import spinup.algos.goaly.core as core
 from spinup.utils.logx import Logger, EpochLogger
 from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
-from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
+from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs, broadcast, gather
 from gym.spaces import Box, Discrete
 
 from sklearn.decomposition import PCA
@@ -162,6 +162,19 @@ class ObservationsActionsAndGoalsBuffer:
             self.discounts_buf[insert_at] = new_discounts[i]
             self.goals_buf[insert_at] = new_goals[i]
             self.act_buf[insert_at] = new_act[i]
+
+    def broadcast(self):
+
+        data = broadcast({
+            'obs_buf': self.obs_buf,
+            'new_obs_buf': self.new_obs_buf,
+            'discounts_buf': self.discounts_buf,
+            'goals_buf': self.goals_buf,
+            'act_buf': self.act_buf
+            })
+
+        data = gather(data)
+        print (data)
 
 """
 
@@ -418,6 +431,9 @@ def goaly(
                           outputs={'pi': actions_pi, 'v': actions_v, 'goals_pi': goals_pi, 'goals_v': goals_v})
 
     def update():
+
+        trajectory_buf.broadcast()
+
         # Train inverse and forward
         inverse_buf.append(trajectory_buf)
         inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, discounts_ph, actions_ph], inverse_buf.get(reset=False))}

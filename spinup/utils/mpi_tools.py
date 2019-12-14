@@ -19,7 +19,7 @@ def mpi_fork(n, bind_to_core=False):
 
         bind_to_core (bool): Bind each MPI process to a core.
     """
-    if n<=1: 
+    if n<=1:
         return
     if os.getenv("IN_MPI") is None:
         env = os.environ.copy()
@@ -53,6 +53,9 @@ def num_procs():
 def broadcast(x, root=0):
     MPI.COMM_WORLD.Bcast(x, root=root)
 
+def gather(x, root=0):
+    return MPI.COMM_WORLD.gather(x, root=root)
+
 def mpi_op(x, op):
     x, scalar = ([x], True) if np.isscalar(x) else (x, False)
     x = np.asarray(x, dtype=np.float32)
@@ -66,7 +69,7 @@ def mpi_sum(x):
 def mpi_avg(x):
     """Average a scalar or vector over MPI processes."""
     return mpi_sum(x) / num_procs()
-    
+
 def mpi_statistics_scalar(x, with_min_and_max=False):
     """
     Get mean/std and optional min/max of scalar x across MPI processes.
@@ -75,7 +78,7 @@ def mpi_statistics_scalar(x, with_min_and_max=False):
         x: An array containing samples of the scalar to produce statistics
             for.
 
-        with_min_and_max (bool): If true, return min and max of x in 
+        with_min_and_max (bool): If true, return min and max of x in
             addition to mean and std.
     """
     x = np.array(x, dtype=np.float32)
