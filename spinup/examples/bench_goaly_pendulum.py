@@ -5,7 +5,7 @@ import tensorflow as tf
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cpu', type=int, default=4)
+    parser.add_argument('--cpu', type=int, default=1)
     parser.add_argument('--num_runs', type=int, default=10)
     args = parser.parse_args()
 
