@@ -53,8 +53,8 @@ def num_procs():
 def broadcast(x, root=0):
     MPI.COMM_WORLD.Bcast(x, root=root)
 
-def gather(x, root=0):
-    return MPI.COMM_WORLD.gather(x, root=root)
+def allgather(x):
+    return MPI.COMM_WORLD.allgather(x)
 
 def mpi_op(x, op):
     x, scalar = ([x], True) if np.isscalar(x) else (x, False)

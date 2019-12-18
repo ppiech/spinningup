@@ -5,7 +5,7 @@ import time
 import spinup.algos.goaly.core as core
 from spinup.utils.logx import Logger, EpochLogger
 from spinup.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
-from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs, broadcast, gather
+from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs, broadcast, allgather
 from gym.spaces import Box, Discrete
 
 from sklearn.decomposition import PCA
@@ -138,6 +138,21 @@ class ObservationsActionsAndGoalsBuffer:
 
         return to_return
 
+    def all_get(self):
+        obs_buf = allgather(self.obs_buf)
+        new_obs_buf = allgather(self.new_obs_buf)
+        goals_buf = allgather(self.goals_buf)
+        discounts_buf = allgather(self.discounts_buf)
+        act_buf = allgather(self.act_buf)
+
+        # if self.ptr == self.max_size:
+        to_return = [obs_buf, new_obs_buf, goals_buf, discounts_buf, act_buf]
+        # else:
+        #     to_return = [obs_buf[:self.ptr], new_obs_buf[:self.ptr], goals_buf[:self.ptr],
+        #                  discounts_buf[:self.ptr], act_buf[:self.ptr]]
+
+        return to_return
+
     def is_full(self):
         return self.ptr == self.max_size
 
@@ -147,34 +162,23 @@ class ObservationsActionsAndGoalsBuffer:
         buffer, with the new data.
         """
 
-        new_obs, new_new_obs, new_goals, new_discounts, new_act = buffer.get(reset=False)
-        buf_len = len(new_obs)
+        new_obs, new_new_obs, new_goals, new_discounts, new_act = buffer.all_get()
+        buf_len = buffer.ptr
 
-        for i in range(buf_len):
-            if self.ptr == self.max_size:
-                insert_at = np.random.randint(0, self.max_size)
-            else:
-                insert_at = self.ptr
-                self.ptr += 1
+        for mpi_proc_num in range(len(new_obs)):
+            for i in range(buf_len):
+                if self.ptr == self.max_size:
+                    insert_at = np.random.randint(0, self.max_size)
+                else:
+                    insert_at = self.ptr
+                    self.ptr += 1
 
-            self.obs_buf[insert_at] = new_obs[i]
-            self.new_obs_buf[insert_at] = new_new_obs[i]
-            self.discounts_buf[insert_at] = new_discounts[i]
-            self.goals_buf[insert_at] = new_goals[i]
-            self.act_buf[insert_at] = new_act[i]
+                self.obs_buf[insert_at] = new_obs[mpi_proc_num][i]
+                self.new_obs_buf[insert_at] = new_new_obs[mpi_proc_num][i]
+                self.discounts_buf[insert_at] = new_discounts[mpi_proc_num][i]
+                self.goals_buf[insert_at] = new_goals[mpi_proc_num][i]
+                self.act_buf[insert_at] = new_act[mpi_proc_num][i]
 
-    def broadcast(self):
-
-        data = broadcast({
-            'obs_buf': self.obs_buf,
-            'new_obs_buf': self.new_obs_buf,
-            'discounts_buf': self.discounts_buf,
-            'goals_buf': self.goals_buf,
-            'act_buf': self.act_buf
-            })
-
-        data = gather(data)
-        print (data)
 
 """
 
@@ -431,8 +435,6 @@ def goaly(
                           outputs={'pi': actions_pi, 'v': actions_v, 'goals_pi': goals_pi, 'goals_v': goals_v})
 
     def update():
-
-        trajectory_buf.broadcast()
 
         # Train inverse and forward
         inverse_buf.append(trajectory_buf)
