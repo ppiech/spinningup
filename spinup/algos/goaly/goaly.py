@@ -327,7 +327,7 @@ def goaly(
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
     trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch)
-    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, local_steps_per_epoch*invese_buffer_size)
+    inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, goal_octaves, act_dim, steps_per_epoch*invese_buffer_size)
 
     # Count variables
     var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
