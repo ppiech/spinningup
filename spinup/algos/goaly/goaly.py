@@ -199,9 +199,9 @@ def goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=80, inverse_lr=1e-3, invese_buffer_size=2,
+        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3, invese_buffer_size=2,
         # Reward Calculations
-        finish_action_path_on_new_goal=False, no_step_reward=False, forward_error_for_stability_reward=False,
+        use_reward_discount=False, finish_action_path_on_new_goal=False, no_step_reward=False, forward_error_for_stability_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -676,10 +676,10 @@ def goaly(
                                             goal_discount_rate)
 
             logger.store(RewardDiscount=reward_discount)
-
-            discounted_reward = reward * reward_discount
+            adjusted_reward = reward * reward_discount if use_reward_discount else reward
+            
             store_training_step(observations, new_observations, goal, goals_step_reward_v, discounts, actions,
-                                actions_reward_v, discounted_reward, goals_v_t, goals_logp_t, stability, actions_v_t)
+                                actions_reward_v, adjusted_reward, goals_v_t, goals_logp_t, stability, actions_v_t)
 
             stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = \
                 calculate_stability(observations, new_observations, actions, goal)
