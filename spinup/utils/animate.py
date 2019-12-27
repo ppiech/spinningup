@@ -38,7 +38,7 @@ def principal_components(df, features):
 
 
 def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, show_predictions=False,
-                   dont_scale_rewards=False, values=["Observations0", "Reward", "RewardDiscount"]):
+                   dont_scale_rewards=False, values=["Reward", "Observations0", "Observations1", "Observations2"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data, configs = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -104,11 +104,13 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         if animation_control == 'stop' and len(plots) > 0:
             return
 
-        ax_traces.set_title('Goals mapped over Action/Observation space (episode {} of {})'.format(episode, num_episodes))
-
         remove_old_plots()
 
         episode_start, episode_end, episode_len = episode_start_end(episode, num_visible_episodes)
+
+        ax_traces.set_title('Goals mapped over Action/Observation space (episode {} of {}, epoch {} of {})'.format(
+                             episode, num_episodes, df['Epoch'][episode_start], num_epochs))
+
 
         plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values, dont_scale_rewards))
         if show_predictions:
