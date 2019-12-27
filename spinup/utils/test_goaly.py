@@ -41,7 +41,8 @@ def load_policy(fpath, itr='last', deterministic=False, goal_octaves=5):
     try:
         state = joblib.load(osp.join(fpath, 'vars'+itr+'.pkl'))
         env = state['env']
-    except:
+    except e:
+        print(e)
         env = None
 
     return env, get_action

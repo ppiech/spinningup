@@ -180,6 +180,43 @@ class ObservationsActionsAndGoalsBuffer:
                 self.act_buf[insert_at] = new_act[mpi_proc_num][i]
 
 
+def goaly(
+        # Environment and policy
+        env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
+        steps_per_epoch=4000, epochs=50, max_ep_len=1000,
+        # Goals
+        goal_octaves=3, goal_error_base=1, goal_discount_rate=0.02, reward_discount_target=0.6,
+        goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
+        train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
+        # Actions
+        actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
+        train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
+        # Inverse model
+        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3, invese_buffer_size=2,
+        # Reward Calculations
+        use_reward_discount=False, finish_action_path_on_new_goal=False, no_step_reward=False, forward_error_for_stability_reward=False,
+        # etc.
+        logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
+
+    try:
+        do_goaly(env_fn, actor_critic, ac_kwargs,
+            steps_per_epoch, epochs, max_ep_len,
+            # Goals
+            goal_octaves, goal_error_base, goal_discount_rate, reward_discount_target,
+            goals_gamma, goals_clip_ratio, goals_pi_lr, goals_vf_lr,
+            train_goals_pi_iters, train_goals_v_iters, goals_lam, goals_target_kl,
+            # Actions
+            actions_gamma, actions_lam, actions_clip_ratio, action_pi_lr, action_vf_lr,
+            train_actions_pi_iters, train_actions_v_iters, actions_target_kl,
+            # Inverse model
+            inverse_kwargs, split_action_and_goal_models, train_inverse_iters, inverse_lr, invese_buffer_size,
+            # Reward Calculations
+            use_reward_discount, finish_action_path_on_new_goal, no_step_reward, forward_error_for_stability_reward,
+            # etc.
+            logger_kwargs, save_freq, seed, trace_freq)
+    except Excepion as e:
+        print(e)
+        raise e
 """
 
 Proximal Policy Optimization (by clipping),
@@ -187,7 +224,7 @@ Proximal Policy Optimization (by clipping),
 with early stopping based on approximate KL
 
 """
-def goaly(
+def do_goaly(
         # Environment and policy
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
