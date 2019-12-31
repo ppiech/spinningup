@@ -38,7 +38,7 @@ def principal_components(df, features):
 
 
 def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, show_predictions=False,
-                   dont_scale_rewards=False, values=["Reward", "Observations0", "Observations1", "Observations2"]):
+                   dont_scale_rewards=False, values=["Observations0", "GoalsStepReward", "Goal", "GoalPredicted"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data, configs = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -161,10 +161,15 @@ def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5
         scatter = ax_traces.scatter(observations[start:end], actions[start:end], c=goal_values,
                                     s=s, cmap=colormap, marker='o', vmin=0, vmax=(num_goals - 1))
 
+        goal_values_in_plot = set()
+        for goal_value in goal_values:
+            goal_values_in_plot.add(goal_value)
+
         goal_markers = []
         for goal in range(num_goals):
-            goal_markers.append(matplotlib.lines.Line2D([], [], color=goal_color(goal), marker='o', linestyle='None',
-                                                        markersize=5, label=str(goal)))
+            if goal in goal_values_in_plot:
+                goal_markers.append(matplotlib.lines.Line2D([], [], color=goal_color(goal), marker='o', linestyle='None',
+                                                            markersize=5, label=str(goal)))
         legend = plt.legend(handles=goal_markers, fontsize='small', bbox_to_anchor=(-0.05, 1.0))
         return [scatter]
 
