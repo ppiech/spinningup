@@ -38,7 +38,7 @@ def principal_components(df, features):
 
 
 def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, show_predictions=False,
-                   dont_scale_rewards=False, values=["Observations0", "GoalsStepReward", "Goal", "GoalPredicted"]):
+                   dont_scale_rewards=False, values=["Observations0", "Reward", "GoalsStepReward", "ActionError", "GoalError"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data, configs = get_all_datasets(all_logdirs, filename="traces.txt")
