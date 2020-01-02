@@ -192,9 +192,11 @@ def goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3, invese_buffer_size=2,
+        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3,
+        invese_buffer_size=2,
         # Reward Calculations
-        use_reward_discount=False, finish_action_path_on_new_goal=False, no_step_reward=False, forward_error_for_stability_reward=False,
+        use_reward_discount=False, finish_action_path_on_new_goal=False, no_step_reward=False,
+        forward_error_for_stability_reward=False,  actions_step_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
 
@@ -212,6 +214,7 @@ def goaly(
             inverse_kwargs, split_action_and_goal_models, train_inverse_iters, inverse_lr, invese_buffer_size,
             # Reward Calculations
             use_reward_discount, finish_action_path_on_new_goal, no_step_reward, forward_error_for_stability_reward,
+            actions_step_reward,
             # etc.
             logger_kwargs, save_freq, seed, trace_freq)
     except Excepion as e:
@@ -236,9 +239,11 @@ def do_goaly(
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
-        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3, invese_buffer_size=2,
+        inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3,
+        invese_buffer_size=2,
         # Reward Calculations
-        use_reward_discount=False, finish_action_path_on_new_goal=False, no_step_reward=False, forward_error_for_stability_reward=False,
+        use_reward_discount=False, finish_action_path_on_new_goal=False, no_step_reward=False,
+        forward_error_for_stability_reward=False, actions_step_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
     """
@@ -577,7 +582,10 @@ def do_goaly(
         else:
             goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
 
-        actions_ppo_buf.store(actions_reward_v, 0, actions_v_t, actions_logp_t)
+        if actions_step_reward:
+            actions_ppo_buf.store(reward, actions_reward_v, actions_v_t, actions_logp_t)
+        else:
+            actions_ppo_buf.store(reward + actions_reward_v, 0, actions_v_t, actions_logp_t)
 
         logger.store(ActionsVVals=actions_v_t)
         logger.store(GoalsVVals=goals_v_t)
@@ -660,9 +668,7 @@ def do_goaly(
         return episode, observations, reward, done, ep_ret, ep_len
 
     def actions_reward(reward, goal_discount, stability):
-        # debug: no external reward
-        # r = stability
-        r = reward + stability
+        r = stability
         logger.store(ActionsReward=r)
         return r
 
