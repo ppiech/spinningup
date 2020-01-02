@@ -196,7 +196,7 @@ def goaly(
         invese_buffer_size=2,
         # Reward Calculations
         use_reward_discount=False, finish_action_path_on_new_goal=True, no_step_reward=False,
-        forward_error_for_stability_reward=False,  actions_step_reward=False,
+        forward_error_for_stability_reward=False,  actions_step_reward=False, no_path_len_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
 
@@ -627,10 +627,11 @@ def goaly(
         return r
 
     def goals_step_reward(reward, goal_discount, stability):
-        # debug: no goal length reward
-        # r = goal_discount * (actions_ppo_buf.path_len())
-        # r = 0
-        r = goal_discount * (stability + actions_ppo_buf.path_len())
+        if no_path_len_reward:
+            r = goal_discount * (stability + actions_ppo_buf.path_len())
+        else:
+            r = goal_discount * stability
+            
         logger.store(GoalsStepReward=r)
         return r
 
