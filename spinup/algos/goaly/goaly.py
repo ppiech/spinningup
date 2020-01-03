@@ -333,7 +333,6 @@ def goaly(
     a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = \
         core.inverse_model(env, x_ph, x_next_ph, actions_ph, goals_ph, num_goals, split_action_and_goal_models, **inverse_kwargs)
     a_range = core.space_range(env.action_space)
-    o_range = core.space_range(env.observation_space)
 
     a_as_float = tf.cast(a_inverse, tf.float32)
 
@@ -372,7 +371,7 @@ def goaly(
     is_action_space_discrete = isinstance(env.action_space, Discrete)
     x_pred = core.forward_model(x_ph, actions_ph, x_next_ph, is_action_space_discrete)
 
-    forward_diff = tf.abs((tf.cast(x_ph, tf.float32) - x_pred) / o_range, name='forward_diff')
+    forward_diff = tf.abs((tf.cast(x_ph, tf.float32) - x_pred), name='forward_diff')
     forward_error = tf.reduce_mean(forward_diff, name="forward_error")
     forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
 
@@ -582,7 +581,7 @@ def goaly(
                                  x_next_ph: np.array([new_observations]),
                                  actions_ph: np.array([actions]),
                                  goals_ph: np.array([goal])})
-        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPreictionError=forward_prediction_error)
+        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPredictionError=forward_prediction_error)
 
         return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_v[0])
 
@@ -713,7 +712,7 @@ def goaly(
         logger.log_tabular('StabilityReward', average_only=True)
         logger.log_tabular('StabilityActionError', average_only=True)
         logger.log_tabular('StabilityGoalError', average_only=True)
-        logger.log_tabular('ForwardPreictionError', average_only=True)
+        logger.log_tabular('ForwardPredictionError', average_only=True)
         logger.log_tabular('GoalDiscount', average_only=True)
         logger.log_tabular('RewardDiscount', average_only=True)
         logger.log_tabular('GoalsStepReward', average_only=True)
