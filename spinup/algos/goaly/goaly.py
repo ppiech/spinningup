@@ -532,7 +532,7 @@ def goaly(
             forward_prediction_error = 0
 
         if no_step_reward:
-            goals_ppo_buf.store(reward + goals_step_reward + forward_prediction_error, 0, goals_v_t, goals_logp_t)
+            goals_ppo_buf.store(reward + forward_prediction_error, 0, goals_v_t, goals_logp_t)
         else:
             goals_ppo_buf.store(reward + forward_prediction_error, goals_step_reward, goals_v_t, goals_logp_t)
 

@@ -133,7 +133,7 @@ def action_activation(x):
     return tf.round(x)
 
 def inverse_model(env, x, x_next, a, goals, num_goals, split_action_and_goal_models=False, hidden_sizes=(32,32),
-                  activation=tf.nn.relu, goals_output_activation=None):
+                  activation=tf.nn.relu, goals_output_activation=tf.sigmoid):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
     # x_next = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
