@@ -38,7 +38,7 @@ def principal_components(df, features):
 
 
 def make_animation(all_logdirs, colormap_name='Spectral', num_visible_episodes=5, show_predictions=False,
-                   dont_scale_rewards=False, values=["Observations0", "Reward", "GoalsStepReward", "ActionError", "GoalError"]):
+                   dont_scale_rewards=False, values=["Observations0", "Reward", "GoalsStepReward"]):
 
     colormap = colormap=cm.get_cmap(colormap_name)
     data, configs = get_all_datasets(all_logdirs, filename="traces.txt")
@@ -206,7 +206,7 @@ def main():
     parser.add_argument('--visible_episodes', '-v', type=int, default=5)
     parser.add_argument('--show_predictions', '-p', action='store_true')
     parser.add_argument('--dont_scale_rewards', '-s', action='store_true')
-    parser.add_argument('--value', '-y', default='Reward', nargs='*')
+    parser.add_argument('--value', '-y', action='append')
     args = parser.parse_args()
     """
 
@@ -217,7 +217,7 @@ def main():
 
     """
 
-    make_animation(args.logdir, args.colormap, args.visible_episodes, args.show_predictions, args.dont_scale_rewards)
+    make_animation(args.logdir, args.colormap, args.visible_episodes, args.show_predictions, args.dont_scale_rewards, args.value)
 
     #TODO use args.value
     # make_animation(args.logdir, args.colormap, args.visible_episodes, args.value)
