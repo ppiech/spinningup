@@ -196,7 +196,7 @@ def goaly(
         invese_buffer_size=2,
         # Reward Calculations
         use_reward_discount=False, finish_action_path_on_new_goal=True, no_step_reward=False,
-        forward_error_for_stability_reward=False,  actions_step_reward=False, no_path_len_reward=False,
+        forward_error_for_curiosity_reward=False,  actions_step_reward=False, no_path_len_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
 
@@ -398,10 +398,7 @@ def goaly(
     # goaly reward
 
     # by default use invese action error in stability reward
-    if forward_error_for_stability_reward:
-        stability_reward = 1 + 2*forward_error * inverse_goal_error - inverse_action_error - forward_error
-    else:
-        stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
+    stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
 
     # cap stability reward
     stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
@@ -528,13 +525,17 @@ def goaly(
     episode = 0
 
     def store_training_step(observations, new_observations, goal, goals_step_reward, discounts, actions,
-                            actions_reward_v, reward, goals_v_t, goals_logp_t, stability, actions_v_t):
+                            actions_reward_v, reward, goals_v_t, goals_logp_t, stability, actions_v_t,
+                            forward_prediction_error):
         trajectory_buf.store(observations, new_observations, goal, discounts, actions)
 
+        if not forward_error_for_curiosity_reward:
+            forward_prediction_error = 0
+
         if no_step_reward:
-            goals_ppo_buf.store(reward + goals_step_reward, 0, goals_v_t, goals_logp_t)
+            goals_ppo_buf.store(reward + goals_step_reward + forward_prediction_error, 0, goals_v_t, goals_logp_t)
         else:
-            goals_ppo_buf.store(reward, goals_step_reward, goals_v_t, goals_logp_t)
+            goals_ppo_buf.store(reward + forward_prediction_error, goals_step_reward, goals_v_t, goals_logp_t)
 
         if actions_step_reward:
             actions_ppo_buf.store(reward, actions_reward_v, actions_v_t, actions_logp_t)
@@ -628,10 +629,10 @@ def goaly(
 
     def goals_step_reward(reward, goal_discount, stability):
         if no_path_len_reward:
-            r = goal_discount * (stability + actions_ppo_buf.path_len())
-        else:
             r = goal_discount * stability
-            
+        else:
+            r = goal_discount * (stability + actions_ppo_buf.path_len())
+
         logger.store(GoalsStepReward=r)
         return r
 
@@ -677,7 +678,7 @@ def goaly(
             adjusted_reward = reward * reward_discount if use_reward_discount else reward
 
             store_training_step(observations, new_observations, goal, goals_step_reward_v, discounts, actions,
-                                actions_reward_v, adjusted_reward, goals_v_t, goals_logp_t, stability, actions_v_t)
+                                actions_reward_v, adjusted_reward, goals_v_t, goals_logp_t, stability, actions_v_t, forward_prediction_error)
 
             stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = \
                 calculate_stability(observations, new_observations, actions, goal)

@@ -16,6 +16,7 @@ if __name__ == '__main__':
     eg.add('invese_buffer_size', [3])
     eg.add('goal_discount_rate', [0.0, 0.1])
     eg.add('no_path_len_reward', [True])
+    eg.add('forward_error_for_curiosity_reward', [True], '')
     eg.add('epochs', 500)
     eg.add('steps_per_epoch', 1000)
     eg.add('ac_kwargs:hidden_sizes', [(32,32)], 'hid')
