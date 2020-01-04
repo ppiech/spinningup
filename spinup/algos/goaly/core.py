@@ -109,7 +109,7 @@ def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation
 Actor-Critics
 """
 def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
-                     output_activation=None, policy=None, action_space=None, x_value_with_action=False):
+                     output_activation=None, policy=None, action_space=None):
 
     # default policy builder depends on action space
     if policy is None and isinstance(action_space, Box):
@@ -120,9 +120,13 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
     with tf.variable_scope('pi'):
         pi, logp, logp_pi = policy(x, goals, a, hidden_sizes, activation, output_activation, action_space)
     with tf.variable_scope('v'):
-        if x_value_with_action:
-            x = tf.concat([x, pi], 1)
-        v = tf.squeeze(mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[1], activation, None), axis=1)
+        if goals is None:
+            features = x
+        else:
+            features = tf.concat([x, goals], 1)
+
+        v = tf.squeeze(mlp(features, list(hidden_sizes)+[1], activation, None), axis=1)
+        
     return pi, logp, logp_pi, v
 
 """
@@ -201,63 +205,3 @@ def space_range(space):
 """
 Goal Calculations
 """
-
-"""
-Creates a scale of weights for goals applied to goal loss calculations.  The scale is an exponential based on
-powers of 2, where all values add up to 1.
-"""
-def update_reward_dicscounts(reward_discount, reward, discount_rate):
-    discount = reward_discount * discount_rate
-    if goal & (1 << i):
-        reward_discount -= discount
-    else:
-        reward_discount += discount
-
-def get_goal_discount_value(goal_discounts, goal):
-    discount = 0
-    num_discounts = len(goal_discounts)
-    for i in range(0, num_discounts):
-        if goal & (1 << i):
-            octave_discount = goal_discounts[i]
-        else:
-            octave_discount = 1 - goal_discounts[i]
-        # treat all discounts equally in clac:
-        #discount += octave_discount / num_discounts
-        #debug: put discounts on a graduated scale
-        discount += octave_discount / (2**(num_discounts - i))
-
-    return discount
-
-"""
-For goal-discounts 0.5% is the mid-point and represents neutral.  If discount moves towards 0 or 1, it causes a
-corresponding goal to be discounted towards 0.
-"""
-def update_goal_discounts(goal_discounts, goal, discount_rate):
-    updated_discounts = []
-    for i in range(0, len(goal_discounts)):
-        if goal_discounts[i] < 0.5:
-            goal_discount_value = goal_discounts[i] * discount_rate
-        else:
-            goal_discount_value = (1 - goal_discounts[i]) * discount_rate
-
-        if goal & (1 << i):
-            updated_discounts.append(max(goal_discounts[i] - goal_discount_value, 0.01))
-        else:
-            updated_discounts.append(min(goal_discounts[i] + goal_discount_value, 0.99))
-
-    return np.array(updated_discounts)
-
-def update_reward_discount(reward, discount, reward_min, reward_max, discount_target, discount_rate):
-    reward_min = min(reward_min, reward) if reward_min != None else reward
-    reward_max = max(reward_max, reward) if reward_max != None else reward
-
-    offset = (reward - reward_min) / max(reward_max - reward_min, 1e-5)
-
-    if offset < discount_target:
-        discount = min((discount_target - offset) * discount_rate + discount, 0.99)
-    else:
-        discount = max(discount - ((offset - discount_target) * discount_rate), 0.01)
-
-    # print("max = {}, min = {}, reward = {}, offset = {}, discount={}".format(reward_max, reward_min, reward, offset, discount))
-
-    return discount, reward_min, reward_max

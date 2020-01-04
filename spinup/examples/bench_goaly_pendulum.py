@@ -18,8 +18,6 @@ if __name__ == '__main__':
     eg.add('steps_per_epoch', 2400)
     eg.add('goal_octaves', [6])
     eg.add('invese_buffer_size', [3])
-    eg.add('goal_discount_rate', [0.01])
-    eg.add('use_reward_discount', [False])
     eg.add('no_path_len_reward', [True])
     eg.add('split_action_and_goal_models', [False], '')
     eg.add('no_step_reward', [True], '')
