@@ -11,7 +11,7 @@ if __name__ == '__main__':
 
     print(args.num_runs)
 
-    eg = ExperimentGrid(name='no_path_len_reward')
+    eg = ExperimentGrid(name='no_stability_in_goal')
     eg.add('env_name', 'Pendulum-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 400)
@@ -22,7 +22,7 @@ if __name__ == '__main__':
     eg.add('use_reward_discount', [False])
     eg.add('no_path_len_reward', [True])
     eg.add('split_action_and_goal_models', [False], '')
-    eg.add('no_step_reward', [False], '')
+    eg.add('no_step_reward', [True], '')
     eg.add('actions_step_reward', [True], '')
     eg.add('forward_error_for_curiosity_reward', [False], '')
     eg.add('finish_action_path_on_new_goal', [True], '')

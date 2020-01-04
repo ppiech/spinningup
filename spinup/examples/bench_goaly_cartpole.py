@@ -15,6 +15,7 @@ if __name__ == '__main__':
     eg.add('epochs', 100)
     eg.add('goal_octaves', [6])
     eg.add('invese_buffer_size', [3])
+    eg.add('no_step_reward', [True], '')
     eg.add('goal_discount_rate', [0.00])
     eg.add('steps_per_epoch', 4000)
     eg.add('ac_kwargs:hidden_sizes', [(32,32)], 'hid')
