@@ -187,10 +187,10 @@ def goaly(
         # Goals
         goal_octaves=3, goal_error_base=1, goal_discount_rate=0.02, reward_discount_target=0.6,
         goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
-        train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
+        train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01, goals_entropy_bonus=0.0,
         # Actions
         actions_gamma=0.99, actions_lam=0.97, actions_clip_ratio=0.2, action_pi_lr=3e-4, action_vf_lr=1e-3,
-        train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
+        train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01, actions_entropy_bonus=0.0,
         # Inverse model
         inverse_kwargs=dict(), split_action_and_goal_models=False, train_inverse_iters=20, inverse_lr=1e-3,
         invese_buffer_size=2,
@@ -375,24 +375,25 @@ def goaly(
     forward_error = tf.reduce_mean(forward_diff, name="forward_error")
     forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
 
-    def ppo_objectives(adv_ph, val, ret_ph, logp, logp_old_ph, clip_ratio):
-        ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
-        min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
-        pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
-        v_loss = tf.reduce_mean((ret_ph - val)**2)
-
+    def ppo_objectives(adv_ph, val, ret_ph, logp, logp_old_ph, clip_ratio, entropy_bonus):
         approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
         approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
+
+        ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
+        min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
+        pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv)) - entropy_bonus * approx_ent
+        v_loss = tf.reduce_mean((ret_ph - val)**2)
+
         clipped = tf.logical_or(ratio > (1+clip_ratio), ratio < (1-clip_ratio))
         clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
 
         return pi_loss, v_loss, approx_kl, approx_ent, clipfrac
 
     goals_pi_loss, goals_v_loss, goals_approx_kl, goals_approx_ent, goals_clipfrac = ppo_objectives(
-        goals_adv_ph, goals_v, goals_ret_ph, goals_logp, goals_logp_old_ph, goals_clip_ratio)
+        goals_adv_ph, goals_v, goals_ret_ph, goals_logp, goals_logp_old_ph, goals_clip_ratio, goals_entropy_bonus)
 
     actions_pi_loss, actions_v_loss, actions_approx_kl, actions_approx_ent, actions_clipfrac = ppo_objectives(
-        actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
+        actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio, actions_entropy_bonus)
 
     # goaly reward
 

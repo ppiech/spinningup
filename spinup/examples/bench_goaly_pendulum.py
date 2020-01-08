@@ -24,6 +24,7 @@ if __name__ == '__main__':
     eg.add('split_action_and_goal_models', [False], '')
     eg.add('no_step_reward', [True], '')
     eg.add('actions_step_reward', [True], '')
+    eg.add('actions_entropy_bonus', [0.01, 0.0], '')
     eg.add('forward_error_for_curiosity_reward', [False], '')
     eg.add('finish_action_path_on_new_goal', [True], '')
     eg.add('ac_kwargs:hidden_sizes', [(32, 32)], 'hid')
