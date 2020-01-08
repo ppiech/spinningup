@@ -126,7 +126,7 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
             features = tf.concat([x, goals], 1)
 
         v = tf.squeeze(mlp(features, list(hidden_sizes)+[1], activation, None), axis=1)
-        
+
     return pi, logp, logp_pi, v
 
 """
@@ -136,8 +136,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, x_next, a, goals, num_goals, split_action_and_goal_models=False, hidden_sizes=(32,32),
-                  activation=tf.nn.relu, goals_output_activation=tf.sigmoid):
+def inverse_model(env, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.sigmoid, inverse_buffer_size=3):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
     # x_next = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
@@ -154,25 +153,15 @@ def inverse_model(env, x, x_next, a, goals, num_goals, split_action_and_goal_mod
     else:
         actions_output_activation=None
 
-    # debug: use a scalar instead of one-hot
     goals_one_hot = tf.one_hot(goals, num_goals)
-    # goals_inverse_input = goals_inverse
 
     num_actions = a.get_shape().as_list()[-1]
 
     x = tf.concat([x_next, x], 1)
-    if split_action_and_goal_models:
-        # debug: don't share hidden layers between goals and actions prediction
-        action_logits = mlp(x, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
-        goals_logits = mlp(x, list(hidden_sizes) + [num_goals], activation, goals_output_activation)
-    else:
-        hidden_x = hidden(x, list(hidden_sizes), activation)
-        action_logits = mlp(hidden_x, [num_actions], activation, actions_output_activation)
-        goals_logits = mlp(hidden_x, [num_goals], activation, goals_output_activation)
+    hidden_x = hidden(x, list(hidden_sizes), activation)
+    action_logits = mlp(hidden_x, [num_actions], activation, actions_output_activation)
+    goals_logits = mlp(hidden_x, [num_goals], activation, goals_output_activation)
 
-    # debug: predict goals using a scalar instead of one-hot vector
-    # goals_logits = mlp(x, list(hidden_sizes) + [1], activation, tf.nn.relu)
-    # goals_predicted = goals_logits[0]
     goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
 
     return a, goals_one_hot, action_logits, goals_logits, goals_predicted
