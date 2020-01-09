@@ -671,7 +671,7 @@ def goaly(
             # reward_offset = (new_reward - reward_min / max(reward_max - reward_min, 1e-5)
             # reward_discount = reward_discount - reward_offset * goal_discount_rate
             reward_discount, reward_min, reward_max = \
-                core.update_reward_discount(new_reward, reward_discount, reward_min, reward_max, reward_discount_target,
+                core.update_reward_discount(reward, reward_discount, reward_min, reward_max, reward_discount_target,
                                             goal_discount_rate)
 
             logger.store(RewardDiscount=reward_discount)
@@ -683,7 +683,7 @@ def goaly(
             stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = \
                 calculate_stability(observations, new_observations, actions, goal)
 
-            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, new_reward, reward_discount,
+            log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, reward_discount,
                            goals_v_t, goals_step_reward_v, actions_reward_v, discounts, action_error, goal_error,
                            forward_prediction_error, goal_predicted_v)
 
