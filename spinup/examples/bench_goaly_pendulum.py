@@ -26,6 +26,6 @@ if __name__ == '__main__':
     eg.add('ac_kwargs:activation', [tf.nn.relu], '')
     eg.add('inverse_kwargs:hidden_sizes', [(32, 32)], 'hid')
     eg.add('inverse_kwargs:activation', [tf.nn.relu], '')
-    eg.add('inverse_kwargs:invese_buffer_size', [3], '')
+    eg.add('inverse_kwargs:inverse_buffer_size', [3], '')
     eg.add('inverse_kwargs:goals_output_activation', [tf.nn.sigmoid], '')
     eg.run(goaly, num_cpu=args.cpu)

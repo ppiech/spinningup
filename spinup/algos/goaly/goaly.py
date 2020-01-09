@@ -216,7 +216,7 @@ class ActionsPolicy:
 
         local_steps_per_epoch = int(steps_per_epoch / num_procs())
         self.actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
-        self.inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, steps_per_epoch*inverse_kwargs['invese_buffer_size'])
+        self.inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, steps_per_epoch*inverse_kwargs['inverse_buffer_size'])
 
         # Count variables
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -226,7 +226,7 @@ class ActionsPolicy:
             self.actions_adv_ph, self.actions_v, self.actions_ret_ph, self.actions_logp, self.actions_logp_old_ph, actions_clip_ratio)
 
         # Inverse Dynamics Model
-        self.a_inverse, self.goals_one_hot, self.a_predicted, self.goals_predicted_logits, self.goals_predicted = \
+        a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = \
             core.inverse_model(env, self.x_ph, self.x_next_ph, self.actions_ph, self.goals_ph, num_goals, **inverse_kwargs)
         a_range = core.space_range(env.action_space)
 
@@ -252,13 +252,13 @@ class ActionsPolicy:
         self.inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
         # when calculating goal error for stability reward, compare numerical goal value
-        self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - goals_ph, tf.float32)) * 2.0 / num_goals)
+        self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - self.goals_ph, tf.float32)) * 2.0 / num_goals)
 
         # by default use invese action error in stability reward
         self.stability_reward = 1 + 2*self.inverse_action_error * self.inverse_goal_error - self.inverse_action_error - self.inverse_goal_error
 
         # cap stability reward
-        self.stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
+        self.stability_reward =  tf.math.maximum(tf.math.minimum(self.stability_reward, 1.0), -1.0)
 
         self.train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
         self.train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
@@ -314,7 +314,7 @@ def goaly(
         train_actions_pi_iters=80, train_actions_v_iters=80, actions_target_kl=0.01,
         # Inverse model
         inverse_kwargs=dict(), train_inverse_iters=20, inverse_lr=1e-3,
-        invese_buffer_size=2,
+        inverse_buffer_size=2,
         # Reward Calculations
         finish_action_path_on_new_goal=True, no_step_reward=False,
         forward_error_for_curiosity_reward=False,  actions_step_reward=False, no_path_len_reward=False,
@@ -437,7 +437,7 @@ def goaly(
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
     # actions_ppo_buf = PPOBuffer(local_steps_per_epoch, actions_gamma, actions_lam)
     trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, local_steps_per_epoch)
-    # inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, steps_per_epoch*invese_buffer_size)
+    # inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, steps_per_epoch*inverse_buffer_size)
 
     # # Count variables
     # var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])

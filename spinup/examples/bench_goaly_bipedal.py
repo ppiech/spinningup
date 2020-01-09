@@ -13,7 +13,7 @@ if __name__ == '__main__':
     eg.add('env_name', 'BipedalWalker-v2', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('goal_octaves', [6])
-    eg.add('invese_buffer_size', [3])
+    eg.add('inverse_buffer_size', [3])
     eg.add('no_path_len_reward', [True])
     eg.add('forward_error_for_curiosity_reward', [True], '')
     eg.add('epochs', 500)
