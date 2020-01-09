@@ -93,7 +93,7 @@ with early stopping based on approximate KL
 def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
         vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
-        target_kl=0.01, logger_kwargs=dict(), save_freq=10):
+        entropy_bonus=0.0, target_kl=0.01, logger_kwargs=dict(), save_freq=10):
     """
 
     Args:
@@ -204,12 +204,12 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0,
     # PPO objectives
     ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
     min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
-    pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
+    approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
+    pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv)) - entropy_bonus * approx_ent
     v_loss = tf.reduce_mean((ret_ph - v)**2)
 
     # Info (useful to watch during learning)
     approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
-    approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
     clipped = tf.logical_or(ratio > (1+clip_ratio), ratio < (1-clip_ratio))
     clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
 
