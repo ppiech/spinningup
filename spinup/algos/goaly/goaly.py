@@ -664,7 +664,7 @@ def goaly(
             goals_step_reward_v = goals_step_reward(reward, goal_discount, stability)
             actions_reward_v = actions_reward(reward, goal_discount, stability)
 
-            new_observations, new_reward, done, _ = env.step(actions)
+            new_observations, reward, done, _ = env.step(actions)
 
             # reward_min = min(reward_min, new_reward)
             # reward_max = max(reward_max, new_reward)
@@ -688,7 +688,6 @@ def goaly(
                            forward_prediction_error, goal_predicted_v)
 
             observations = new_observations
-            reward = new_reward
             ep_ret += reward
             ep_len += 1
 
