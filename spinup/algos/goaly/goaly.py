@@ -594,7 +594,7 @@ def goaly(
                 print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
             # if trajectory didn't reach terminal state, bootstrap value target
             if done:
-                last_actions_val = actions_reward(reward, goal_discount_value, stability)
+                last_actions_val = actions_reward(reward, goal_discount_value, stability) + reward
                 last_goals_val = goals_step_reward(reward, goal_discount_value, stability) + reward
             else:
                 last_actions_val, last_goals_val = \
