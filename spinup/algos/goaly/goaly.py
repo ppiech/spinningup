@@ -549,7 +549,7 @@ def goaly(
         logger.store(GoalPathLen=actions_ppo_buf.path_len())
 
     def log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, reward_discount, goals_v_t, \
-                       goals_step_reward_v, actions_reward_v, discounts, action_error, goal_error, \
+                       goals_step_reward_v, actions_reward_v, actions_v_t, discounts, action_error, goal_error, \
                        forward_prediction_error, goals_predicted_v):
         if episode % trace_freq == 0:
             traces_logger.log_tabular('Epoch', epoch)
@@ -567,6 +567,7 @@ def goaly(
             traces_logger.log_tabular('GoalsVVal', goals_v_t)
             traces_logger.log_tabular('GoalsStepReward', goals_step_reward_v)
             traces_logger.log_tabular('ActionsReward', actions_reward_v)
+            traces_logger.log_tabular('ActionsVVal', actions_v_t)
             traces_logger.log_tabular('GoalDiscount', goal_discount)
             traces_logger.log_tabular('RewardDiscount', reward_discount)
             traces_logger.log_tabular('ActionError', action_error)
@@ -684,7 +685,7 @@ def goaly(
                 calculate_stability(observations, new_observations, actions, goal)
 
             log_trace_step(epoch, episode, observations, actions, goal, goal_discount, reward, reward_discount,
-                           goals_v_t, goals_step_reward_v, actions_reward_v, discounts, action_error, goal_error,
+                           goals_v_t, goals_step_reward_v, actions_reward_v, actions_v_t[0], discounts, action_error, goal_error,
                            forward_prediction_error, goal_predicted_v)
 
             observations = new_observations

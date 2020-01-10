@@ -5,7 +5,7 @@ import tensorflow as tf
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cpu', type=int, default=4)
+    parser.add_argument('--cpu', type=int, default=1)
     parser.add_argument('--num_runs', type=int, default=10)
     args = parser.parse_args()
 
@@ -13,7 +13,7 @@ if __name__ == '__main__':
     eg.add('env_name', 'BipedalWalker-v2', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('goal_octaves', [6])
-    eg.add('invese_buffer_size', [3])
+    eg.add('invese_buffer_size', [5])
     eg.add('goal_discount_rate', [0.0])
     eg.add('no_path_len_reward', [True])
     eg.add('no_step_reward', [True], '')
