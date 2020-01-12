@@ -6,6 +6,7 @@ import tensorflow as tf
 import numpy as np
 from spinup import EpochLogger
 from spinup.utils.logx import restore_tf_graph
+import spinup.algos.goaly.core as core
 
 def load_policy(fpath, itr='last', deterministic=False, goal_octaves=5):
 
@@ -31,10 +32,11 @@ def load_policy(fpath, itr='last', deterministic=False, goal_octaves=5):
 
     # make function for producing an action given a single state
     def get_action(prev_goal, x):
-        goal = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:], model['discounts_ph']: np.full((goal_octaves + 1), 0.5).reshape(1, -1) })
+        goal_num = sess.run(model['goals_pi'], feed_dict={model['x']: x[None,:] })
         # goal = np.array([12])
-        action = sess.run(action_op, feed_dict={model['x']: x[None,:], model['goals_ph']: goal})[0]
-        return goal, action
+        goal_predicted_num = core.goal_num_to_bin(goal_num[0], goal_octaves)
+        action = sess.run(action_op, feed_dict={model['x']: x[None,:], model['goals_bin_ph']: [goal_predicted_num]})[0]
+        return goal_num, action
 
     # try to load environment from save
     # (sometimes this will fail because the environment could not be pickled)
