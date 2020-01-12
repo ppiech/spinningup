@@ -105,6 +105,7 @@ def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation
     logp_pi = gaussian_likelihood(pi, mu, log_std)
     return pi, logp, logp_pi
 
+
 """
 Actor-Critics
 """
@@ -120,9 +121,11 @@ def mlp_actor_critic(x, goals, a, hidden_sizes=(64,64), activation=tf.tanh,
     with tf.variable_scope('pi'):
         pi, logp, logp_pi = policy(x, goals, a, hidden_sizes, activation, output_activation, action_space)
     with tf.variable_scope('v'):
-        if x_value_with_action:
-            x = tf.concat([x, pi], 1)
-        v = tf.squeeze(mlp(tf.concat([x, goals], 1), list(hidden_sizes)+[1], activation, None), axis=1)
+        if goals is None:
+            features = x
+        else:
+            features = tf.concat([x, goals], 1)
+        v = tf.squeeze(mlp(features, list(hidden_sizes)+[1], activation, None), axis=1)
     return pi, logp, logp_pi, v
 
 """
@@ -132,7 +135,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, x_next, a, goals, num_goals, split_action_and_goal_models=False, hidden_sizes=(32,32),
+def inverse_model(env, x, x_next, a, goals, goal_octaves, split_action_and_goal_models=False, hidden_sizes=(32,32),
                   activation=tf.nn.relu, goals_output_activation=tf.sigmoid):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
@@ -150,28 +153,21 @@ def inverse_model(env, x, x_next, a, goals, num_goals, split_action_and_goal_mod
     else:
         actions_output_activation=None
 
-    # debug: use a scalar instead of one-hot
-    goals_one_hot = tf.one_hot(goals, num_goals)
-    # goals_inverse_input = goals_inverse
-
     num_actions = a.get_shape().as_list()[-1]
 
     x = tf.concat([x_next, x], 1)
     if split_action_and_goal_models:
         # debug: don't share hidden layers between goals and actions prediction
         action_logits = mlp(x, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
-        goals_logits = mlp(x, list(hidden_sizes) + [num_goals], activation, goals_output_activation)
+        goals_logits = mlp(x, list(hidden_sizes) + [goal_octaves], activation, goals_output_activation)
     else:
         hidden_x = hidden(x, list(hidden_sizes), activation)
         action_logits = mlp(hidden_x, [num_actions], activation, actions_output_activation)
-        goals_logits = mlp(hidden_x, [num_goals], activation, goals_output_activation)
+        goals_logits = mlp(hidden_x, [goal_octaves], activation, goals_output_activation)
 
-    # debug: predict goals using a scalar instead of one-hot vector
-    # goals_logits = mlp(x, list(hidden_sizes) + [1], activation, tf.nn.relu)
-    # goals_predicted = goals_logits[0]
-    goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
+    goals_predicted = tf.math.round(goals_logits)
 
-    return a, goals_one_hot, action_logits, goals_logits, goals_predicted
+    return a, action_logits, goals_logits, goals_predicted
 
 """
 Forward Dynamics
@@ -227,6 +223,20 @@ def get_goal_discount_value(goal_discounts, goal):
         discount += octave_discount / (2**(num_discounts - i))
 
     return discount
+
+def goal_num_to_bin(goal_num, goal_octaves):
+    goal_bin = []
+    for i in range(0, goal_octaves):
+        goal_bin.append(1 if goal_num & (1 << i) else 0)
+
+    return np.array(goal_bin)
+
+def goal_bin_to_num(goal_bin):
+    goal_num = 0
+    for i in range(0, len(goal_bin)):
+        goal_num = goal_num + goal_bin[i] * 2**i
+
+    return goal_num
 
 """
 For goal-discounts 0.5% is the mid-point and represents neutral.  If discount moves towards 0 or 1, it causes a
