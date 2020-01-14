@@ -107,6 +107,7 @@ class ObservationsActionsAndGoalsBuffer:
         self.goals_bin_buf = np.zeros(core.combined_shape(size, goal_octaves), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.ptr, self.max_size = 0, size
+        self.num_goals = 2**goal_octaves
 
     def store(self, obs, new_obs, goal_num, goal_bin, act):
         """
@@ -168,7 +169,9 @@ class ObservationsActionsAndGoalsBuffer:
         for mpi_proc_num in range(len(new_obs)):
             for i in range(buf_len):
                 if self.ptr == self.max_size:
-                    insert_at = np.random.randint(0, self.max_size)
+                    section = self.max_size / self.num_goals
+                    goal_num = new_goal_nums[mpi_proc_num][i]
+                    insert_at = int(section * goal_num + np.random.randint(0, section))
                 else:
                     insert_at = self.ptr
                     self.ptr += 1
@@ -578,6 +581,8 @@ def goaly(
                                  x_next_ph: np.array([new_observations]),
                                  actions_ph: np.array([actions]),
                                  goals_bin_ph: np.array([goal_bin])})
+
+        # print('o = {}, o+={}, g_pred = {}'.format(observations, new_observations, goals_predicted_bin_v))
 
         goal_predicted_num = core.goal_bin_to_num(goals_predicted_bin_v[0])
 

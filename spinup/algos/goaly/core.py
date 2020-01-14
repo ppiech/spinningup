@@ -155,13 +155,13 @@ def inverse_model(env, x, x_next, a, goals, goal_octaves, split_action_and_goal_
 
     num_actions = a.get_shape().as_list()[-1]
 
-    x = tf.concat([x_next, x], 1)
+    features = tf.concat([x_next, x], 1)
     if split_action_and_goal_models:
-        # debug: don't share hidden layers between goals and actions prediction
-        action_logits = mlp(x, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
-        goals_logits = mlp(x, list(hidden_sizes) + [goal_octaves], activation, goals_output_activation)
+        action_logits = mlp(features, list(hidden_sizes) + [num_actions], activation, actions_output_activation)
+        goal_features = tf.concat([x, a], 1)
+        goals_logits = mlp(goal_features, list(hidden_sizes) + [goal_octaves], activation, goals_output_activation)
     else:
-        hidden_x = hidden(x, list(hidden_sizes), activation)
+        hidden_x = hidden(features, list(hidden_sizes), activation)
         action_logits = mlp(hidden_x, [num_actions], activation, actions_output_activation)
         goals_logits = mlp(hidden_x, [goal_octaves], activation, goals_output_activation)
 
