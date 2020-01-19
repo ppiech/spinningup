@@ -15,8 +15,8 @@ if __name__ == '__main__':
     eg.add('epochs', 100)
     eg.add('steps_per_epoch', 2000)
     eg.add('goal_octaves', 5)
-    eg.add('no_step_reward', [True], '')
-
+    eg.add('no_step_reward', [False], '')
+    eg.add('forward_error_for_curiosity_reward', [True], '')
     eg.add('split_action_and_goal_models', [True])
     eg.add('ac_kwargs:hidden_sizes', [(32,32)], 'hid')
     eg.add('ac_kwargs:activation', [tf.nn.relu], '')

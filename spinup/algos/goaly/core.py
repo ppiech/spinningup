@@ -172,7 +172,7 @@ def inverse_model(env, x, x_next, a, goals, goal_octaves, split_action_and_goal_
 """
 Forward Dynamics
 """
-def forward_model(x, a, x_next, is_action_space_discrete, hidden_sizes=(16,), activation=tf.nn.relu):
+def forward_model(x, a, x_next, is_action_space_discrete, hidden_sizes=(32,32), activation=tf.nn.relu):
     features_shape = x.shape.as_list()[1:]
 
     if is_action_space_discrete:

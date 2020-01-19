@@ -171,7 +171,7 @@ class ObservationsActionsAndGoalsBuffer:
                 if self.ptr == self.max_size:
                     section = self.max_size / self.num_goals
                     goal_num = new_goal_nums[mpi_proc_num][i]
-                    insert_at = int(section * goal_num + np.random.randint(0, section))
+                    insert_at = int(np.random.normal(section * goal_num, 2 * section)) % self.max_size
                 else:
                     insert_at = self.ptr
                     self.ptr += 1
