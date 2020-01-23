@@ -197,7 +197,7 @@ def train_ppo(sess, train_iters, train_pi, approx_kl, target_kl, inputs):
 class ActionsPolicy:
 
     def __init__(self, logger, traces_logger, env, x_ph, x_next_ph, actions_ph, num_goals, actor_critic, steps_per_epoch,
-                inverse_kwargs, ac_kwargs,
+                inverse_kwargs=dict(), ac_kwargs=dict(),
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
                 actions_step_reward=True, finish_action_path_on_new_goal=True,
                 train_pi_iters=80, train_v_iters=80, target_kl=0.01,
@@ -343,15 +343,15 @@ class ActionsPolicy:
             self.traces_logger.log_tabular('GoalError', goal_error)
             self.traces_logger.log_tabular('ForwardPredictionError', forward_prediction_error)
 
-        return lambda ep_stopped, ep_done: self.handle_path_termination(ep_stopped, ep_done, goal, observations, reward, stability)
+        return lambda sess, ep_stopped, ep_done: self.handle_path_termination(sess, ep_stopped, ep_done, goal, observations, reward, stability)
 
-    def handle_path_termination(self, ep_stopped, ep_done, goal, observations, reward, stability):
+    def handle_path_termination(self, sess, ep_stopped, ep_done, goal, observations, reward, stability):
         if ep_stopped:
             # if trajectory didn't reach terminal state, bootstrap value target
             if ep_done:
                 last_actions_val = self.actions_reward(reward, stability)
             else:
-                last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
+                last_actions_val = sess.run([self.actions_v], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
 
             self.ppo_buf.finish_path(last_actions_val)
 
@@ -364,8 +364,6 @@ class ActionsPolicy:
             if goal != self.prev_goal:
                 self.logger.store(GoalPathLen=self.ppo_buf.path_len())
                 last_actions_val = self.actions_reward(reward, stability)
-                # debug: get last path value from values model
-                # last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
                 self.ppo_buf.finish_path(last_actions_val)
 
         self.prev_goal = goal
@@ -680,7 +678,7 @@ def goaly(
             observations = new_observations
 
             ep_stopped = terminal = done or (ep_len == max_ep_len) or (t==local_steps_per_epoch-1)
-            handle_action_path_termination(ep_stopped, done)
+            handle_action_path_termination(sess, ep_stopped, done)
             episode, observations, reward, done, ep_ret, ep_len = \
                 handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len)
 
