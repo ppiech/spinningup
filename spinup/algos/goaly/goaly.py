@@ -100,7 +100,8 @@ class ObservationsActionsAndGoalsBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, obs_dim, act_dim, size):
+    def __init__(self, num_goals, obs_dim, act_dim, size):
+        self.num_goals = num_goals
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.new_obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.goals_buf = np.zeros(size , dtype=np.float32)
@@ -161,7 +162,9 @@ class ObservationsActionsAndGoalsBuffer:
         for mpi_proc_num in range(len(new_obs)):
             for i in range(buf_len):
                 if self.ptr == self.max_size:
-                    insert_at = np.random.randint(0, self.max_size)
+                    section = self.max_size / self.num_goals
+                    goal_num = new_goals[mpi_proc_num][i]
+                    insert_at = int(np.random.normal(section * goal_num, section)) % self.max_size
                 else:
                     insert_at = self.ptr
                     self.ptr += 1
@@ -229,7 +232,7 @@ class ActionsPolicy:
 
         local_steps_per_epoch = int(steps_per_epoch / num_procs())
         self.ppo_buf = PPOBuffer(local_steps_per_epoch, gamma, lam)
-        self.inverse_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, steps_per_epoch*inverse_buffer_size)
+        self.inverse_buf = ObservationsActionsAndGoalsBuffer(num_goals, obs_dim, act_dim, steps_per_epoch*inverse_buffer_size)
 
         # Count variables
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -542,7 +545,7 @@ def goaly(
 
     # Experience buffer
     goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
-    trajectory_buf = ObservationsActionsAndGoalsBuffer(obs_dim, act_dim, local_steps_per_epoch)
+    trajectory_buf = ObservationsActionsAndGoalsBuffer(num_goals, obs_dim, act_dim, local_steps_per_epoch)
 
     # # Count variables
     # var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
