@@ -5,7 +5,7 @@ import tensorflow as tf
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cpu', type=int, default=4)
+    parser.add_argument('--cpu', type=int, default=1)
     parser.add_argument('--num_runs', type=int, default=10)
     args = parser.parse_args()
 
@@ -19,10 +19,10 @@ if __name__ == '__main__':
     eg.add('goal_octaves', [6])
     eg.add('no_path_len_reward', [True])
     eg.add('no_step_reward', [True], '')
-    eg.add('actions_step_reward', [True], '')
     eg.add('forward_error_for_curiosity_reward', [False], '')
-    eg.add('finish_action_path_on_new_goal', [True], '')
+    eg.add('actions_kwargs:finish_action_path_on_new_goal', [True], '')
     eg.add('actions_kwargs:gamma', 0.99, '')
+    eg.add('actions_kwargs:actions_step_reward', [True], '')
     eg.add('actions_kwargs:ac_kwargs:hidden_sizes', (32, 32), '')
     eg.add('actions_kwargs:ac_kwargs:activation', tf.nn.relu, '')
     eg.add('actions_kwargs:inverse_buffer_size', 3, '')

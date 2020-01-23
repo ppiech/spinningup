@@ -185,7 +185,7 @@ def ppo_objectives(adv_ph, val, ret_ph, logp, logp_old_ph, clip_ratio):
     return pi_loss, v_loss, approx_kl, approx_ent, clipfrac
 
 # Training
-def train_ppo(train_iters, train_pi, approx_kl, target_kl):
+def train_ppo(sess, train_iters, train_pi, approx_kl, target_kl, inputs):
     for i in range(train_iters):
         _, kl = sess.run([train_pi, approx_kl], feed_dict=inputs)
         kl = mpi_avg(kl)
@@ -196,20 +196,27 @@ def train_ppo(train_iters, train_pi, approx_kl, target_kl):
 
 class ActionsPolicy:
 
-    def __init__(self, logger, env, x_ph, x_next_ph, actions_ph, num_goals, actor_critic, steps_per_epoch,
+    def __init__(self, logger, traces_logger, env, x_ph, x_next_ph, actions_ph, num_goals, actor_critic, steps_per_epoch,
                 inverse_kwargs, ac_kwargs,
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
+                actions_step_reward=True, finish_action_path_on_new_goal=True,
                 train_pi_iters=80, train_v_iters=80, target_kl=0.01,
-                inverse_buffer_size=3, inverse_lr=1e-3):
+                inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=20):
         self.logger = logger
+        self.traces_logger = traces_logger
+        self.env = env
         self.x_ph, self.x_next_ph, self.actions_ph = x_ph, x_next_ph, actions_ph
+        self.prev_goal = None
         self.train_pi_ters = train_pi_iters
         self.train_v_iters = train_v_iters
         self.target_kl = target_kl
+        self.train_inverse_iters = train_inverse_iters
+        self.actions_step_reward = actions_step_reward
+        self.finish_action_path_on_new_goal = finish_action_path_on_new_goal
 
-        self.actions_adv_ph = core.placeholder(None, "actions_adv_ph")
-        self.actions_ret_ph = core.placeholder(None, "actions_ret_ph")
-        self.actions_logp_old_ph = core.placeholder(None, "actions_logp_old_ph")
+        self.adv_ph = core.placeholder(None, "actions_adv_ph")
+        self.ret_ph = core.placeholder(None, "actions_ret_ph")
+        self.logp_old_ph = core.placeholder(None, "actions_logp_old_ph")
         self.goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
 
         with tf.variable_scope('actions'):
@@ -228,23 +235,23 @@ class ActionsPolicy:
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
         logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
-        actions_pi_loss, actions_v_loss, self.actions_approx_kl, self.actions_approx_ent, self.actions_clipfrac = ppo_objectives(
-            self.actions_adv_ph, self.actions_v, self.actions_ret_ph, self.actions_logp, self.actions_logp_old_ph, clip_ratio)
+        self.actions_pi_loss, self.actions_v_loss, self.actions_approx_kl, self.actions_approx_ent, self.actions_clipfrac = ppo_objectives(
+            self.adv_ph, self.actions_v, self.ret_ph, self.actions_logp, self.logp_old_ph, clip_ratio)
 
         # Inverse Dynamics Model
-        a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, goals_predicted = \
+        a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, self.goals_predicted = \
             core.inverse_model(env, self.x_ph, self.x_next_ph, self.actions_ph, self.goals_ph, num_goals, **inverse_kwargs)
         a_range = core.space_range(env.action_space)
 
         a_as_float = tf.cast(a_inverse, tf.float32)
 
         inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
-        inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
+        self.inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
 
         # if isinstance(env.action_space, Discrete):
             # inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
-        inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
-        inverse_loss = inverse_goal_loss + inverse_action_loss
+        self.inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
+        self.inverse_loss = self.inverse_goal_loss + self.inverse_action_loss
 
         # Errors used for calculating return after each step.
         # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
@@ -258,7 +265,15 @@ class ActionsPolicy:
         self.inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
         # when calculating goal error for stability reward, compare numerical goal value
-        self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(goals_predicted - self.goals_ph, tf.float32)) * 2.0 / num_goals)
+        self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(self.goals_predicted - self.goals_ph, tf.float32)) * 2.0 / num_goals)
+
+        # Forward model
+        is_action_space_discrete = isinstance(env.action_space, Discrete)
+        self.x_pred = core.forward_model(x_ph, actions_ph, x_next_ph, is_action_space_discrete)
+
+        forward_diff = tf.abs((tf.cast(x_ph, tf.float32) - self.x_pred), name='forward_diff')
+        self.forward_error = tf.reduce_mean(forward_diff, name="forward_error")
+        self.forward_loss = tf.reduce_mean((self.forward_error)**2, name="forward_loss")
 
         # by default use invese action error in stability reward
         self.stability_reward = 1 + 2*self.inverse_action_error * self.inverse_goal_error - self.inverse_action_error - self.inverse_goal_error
@@ -266,32 +281,45 @@ class ActionsPolicy:
         # cap stability reward
         self.stability_reward =  tf.math.maximum(tf.math.minimum(self.stability_reward, 1.0), -1.0)
 
-        self.train_actions_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(actions_pi_loss)
-        self.train_actions_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(actions_v_loss)
+        self.train_actions_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(self.actions_pi_loss)
+        self.train_actions_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(self.actions_v_loss)
 
-        self.train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
+        self.train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.inverse_loss)
+        self.train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.forward_loss)
 
     def get(self, sess, observations, goal):
         actions, v_t, logp_t = \
             sess.run([self.actions_pi, self.actions_v, self.actions_logp_pi],
-                     feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: goal })
+                     feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: np.array([goal]) })
 
-        store_lam = lambda reward: self.store(actions, actions_reward(reward), v_t, logp_t)
+        actions = actions[0]
+
+        store_lam = lambda should_trace, reward, new_observations: self.store(sess, should_trace, observations, new_observations, actions, goal, reward, v_t, logp_t)
         return actions, store_lam
 
-    def calculate_stability(self, observations, new_observations, actions, goal):
+    def calculate_stability(self, sess, observations, new_observations, actions, goal):
         stability, action_error, goal_error, forward_prediction_error, goals_predicted_v, x_pred_v = \
-            sess.run([stability_reward, inverse_action_error, inverse_goal_error, forward_error, goals_predicted, x_pred],
-                      feed_dict={x_ph: np.array([observations]),
-                                 x_next_ph: np.array([new_observations]),
-                                 actions_ph: np.array([actions]),
-                                 goals_ph: np.array([goal])})
-        logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPredictionError=forward_prediction_error)
+            sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.forward_error, self.goals_predicted, self.x_pred],
+                      feed_dict={self.x_ph: np.array([observations]),
+                                 self.x_next_ph: np.array([new_observations]),
+                                 self.actions_ph: np.array([actions]),
+                                 self.goals_ph: np.array([goal])})
+
+        self.logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPredictionError=forward_prediction_error)
 
         return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_v[0])
 
-    def store(self, actions_reward_v, reward, v_t, logp_t):
-        if actions_step_reward:
+    def actions_reward(self, reward, stability):
+        r = stability
+        self.logger.store(ActionsReward=r)
+        return r
+
+    def store(self, sess, should_trace, observations, new_observations, actions, goal, reward, v_t, logp_t):
+        stability, action_error, goal_error, forward_prediction_error, goals_predicted_v = \
+            self.calculate_stability(sess, observations, new_observations, actions, goal)
+        actions_reward_v = self.actions_reward(reward, stability)
+
+        if self.actions_step_reward:
             self.ppo_buf.store(reward, actions_reward_v, v_t, logp_t)
         else:
             self.ppo_buf.store(reward + actions_reward_v, 0, v_t, logp_t)
@@ -300,29 +328,94 @@ class ActionsPolicy:
         # logger.storeOne("Goal{}Reward".format(goal), reward)
         self.logger.store(GoalPathLen=self.ppo_buf.path_len())
 
-    def update(self, sess, logger, trajectory_buf, train_inverse_iters):
+        if should_trace:
+            for i in range(0, len(observations)):
+                self.traces_logger.log_tabular('Observations{}'.format(i), observations[i])
+            if isinstance(self.env.action_space, Discrete):
+                self.traces_logger.log_tabular('Actions0'.format(i), actions)
+            else:
+                for i in range(0, len(actions)):
+                    self.traces_logger.log_tabular('Actions{}'.format(i), actions[i])
+            self.traces_logger.log_tabular('Goal', goal)
+            self.traces_logger.log_tabular('GoalPredicted', goals_predicted_v)
+            self.traces_logger.log_tabular('ActionsReward', actions_reward_v)
+            self.traces_logger.log_tabular('ActionError', action_error)
+            self.traces_logger.log_tabular('GoalError', goal_error)
+            self.traces_logger.log_tabular('ForwardPredictionError', forward_prediction_error)
+
+        return lambda ep_stopped, ep_done: self.handle_path_termination(ep_stopped, ep_done, goal, observations, reward, stability)
+
+    def handle_path_termination(self, ep_stopped, ep_done, goal, observations, reward, stability):
+        if ep_stopped:
+            # if trajectory didn't reach terminal state, bootstrap value target
+            if ep_done:
+                last_actions_val = self.actions_reward(reward, stability)
+            else:
+                last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
+
+            self.ppo_buf.finish_path(last_actions_val)
+
+            self.prev_goal = None
+
+        elif self.finish_action_path_on_new_goal:
+            # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
+            # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
+
+            if goal != self.prev_goal:
+                self.logger.store(GoalPathLen=self.ppo_buf.path_len())
+                last_actions_val = self.actions_reward(reward, stability)
+                # debug: get last path value from values model
+                # last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
+                self.ppo_buf.finish_path(last_actions_val)
+
+        self.prev_goal = goal
+
+    def update(self, sess, trajectory_buf):
+
         # Train inverse and forward
         self.inverse_buf.append(trajectory_buf)
-        self.inverse_inputs = {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], inverse_buf.get(reset=False))}
-        inverse_action_loss_old, inverse_goal_loss_old  = sess.run([inverse_action_loss, inverse_goal_loss], feed_dict=inverse_inputs)
+        inverse_inputs = \
+            {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], self.inverse_buf.get(reset=False))}
 
-        for _ in range(train_inverse_iters):
-            sess.run(train_inverse, feed_dict=inverse_inputs)
+        for _ in range(self.train_inverse_iters):
+            sess.run(self.train_inverse, feed_dict=inverse_inputs)
+        inverse_action_loss_v, inverse_goal_loss_v = \
+            sess.run([self.inverse_action_loss, self.inverse_goal_loss], feed_dict=inverse_inputs)
 
-        logger.store(LossActionInverse=inverse_action_loss_new)
-        logger.store(DeltaLossActionInverse=(inverse_action_loss_new - inverse_action_loss_old))
-        logger.store(LossGoalInverse=inverse_goal_loss_new)
-        logger.store(DeltaLossGoalInverse=(inverse_goal_loss_new - inverse_goal_loss_old))        # logger.store(LossForward=forward_loss_new)
+        for _ in range(self.train_inverse_iters):
+            sess.run(self.train_forward, feed_dict=inverse_inputs)
+        forward_loss_v  = sess.run([self.forward_loss], feed_dict=inverse_inputs)
 
-    # Training
-    def train_ppo(inputs):
-        for i in range(self.train_iters):
-            _, kl = sess.run([self.train_pi, self.approx_kl], feed_dict=inputs)
-            kl = mpi_avg(kl)
-            if kl > 1.5 * self.target_kl:
-                # logger.log('Early stopping at step %d due to reaching max kl.'%i)
-                break
-        return i
+        # Prepare PPO training inputs
+        policy_inputs = {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], trajectory_buf.get())}
+
+        actions_ppo_inputs, actions_adv_mean = self.ppo_buf.get()
+        policy_inputs.update({k:v for k,v in zip([self.adv_ph, self.ret_ph, self.logp_old_ph], actions_ppo_inputs)})
+
+        # Train actions
+        actions_pi_l_old, actions_v_l_old, actions_ent = sess.run([self.actions_pi_loss, self.actions_v_loss, self.actions_approx_ent], feed_dict=policy_inputs)
+
+        stop_iter = train_ppo(sess, self.train_iters, train_pi, approx_kl, target_kl, policy_inputs)
+        logger.store(ActionsStopIter=stop_iter)
+
+        for _ in range(train_actions_v_iters):
+            sess.run(train_actions_v, feed_dict=policy_inputs)
+
+        # Log changes from update
+        actions_pi_l_new, actions_v_l_new,  actions_kl, actions_cf = \
+            sess.run([self.actions_pi_loss, self.actions_v_loss, self.actions_approx_kl, self.actions_clipfrac], feed_dict=policy_inputs)
+
+        logger.store(LossActionsPi=actions_pi_l_old)
+        logger.store(LossActionsV=actions_v_l_old)
+        logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
+        logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
+        logger.store(ActionsAdvantageMean=actions_adv_mean)
+        logger.store(ActionsKL=actions_kl)
+        logger.store(ActionsEntropy=actions_ent)
+        logger.store(ActionsClipFrac=actions_cf)
+        logger.store(LossActionInverse=inverse_action_loss_v)
+        logger.store(LossGoalInverse=inverse_goal_loss_v)
+        logger.store(LossForward=forward_loss_v)
 
 def goaly(
         # Environment and policy
@@ -338,8 +431,8 @@ def goaly(
         inverse_kwargs=dict(), train_inverse_iters=20, inverse_lr=1e-3,
         inverse_buffer_size=2,
         # Reward Calculations
-        finish_action_path_on_new_goal=True, no_step_reward=False,
-        forward_error_for_curiosity_reward=False,  actions_step_reward=False, no_path_len_reward=False,
+        no_step_reward=False,
+        forward_error_for_curiosity_reward=False, no_path_len_reward=False,
         # etc.
         logger_kwargs=dict(), save_freq=10, seed=0, trace_freq=5):
 
@@ -433,8 +526,8 @@ def goaly(
     # Inputs to computation graph
     x_ph, x_next_ph, actions_ph = core.placeholders_from_env(env)
 
-    actions_policy = ActionsPolicy(logger, env, x_ph, x_next_ph, actions_ph, num_goals, actor_critic, steps_per_epoch,
-                                   **actions_kwargs)
+    actions_policy = ActionsPolicy(logger, traces_logger, env, x_ph, x_next_ph, actions_ph, num_goals, actor_critic,
+                                   steps_per_epoch, **actions_kwargs)
 
     goals_adv_ph = core.placeholder(None, "goals_adv_ph")
     goals_ret_ph = core.placeholder(None, "goals_ret_ph")
@@ -455,36 +548,12 @@ def goaly(
     # var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
     # logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
-    # Forward model
-    is_action_space_discrete = isinstance(env.action_space, Discrete)
-    x_pred = core.forward_model(x_ph, actions_ph, x_next_ph, is_action_space_discrete)
-
-    forward_diff = tf.abs((tf.cast(x_ph, tf.float32) - x_pred), name='forward_diff')
-    forward_error = tf.reduce_mean(forward_diff, name="forward_error")
-    forward_loss = tf.reduce_mean((forward_error)**2, name="forward_loss")
-
     goals_pi_loss, goals_v_loss, goals_approx_kl, goals_approx_ent, goals_clipfrac = ppo_objectives(
         goals_adv_ph, goals_v, goals_ret_ph, goals_logp, goals_logp_old_ph, goals_clip_ratio)
-
-    # actions_pi_loss, actions_v_loss, actions_approx_kl, actions_approx_ent, actions_clipfrac = ppo_objectives(
-    #     actions_adv_ph, actions_v, actions_ret_ph, actions_logp, actions_logp_old_ph, actions_clip_ratio)
-
-    # goaly reward
-
-    # # by default use invese action error in stability reward
-    # stability_reward = 1 + 2*inverse_action_error * inverse_goal_error - inverse_action_error - inverse_goal_error
-    #
-    # # cap stability reward
-    # stability_reward =  tf.math.maximum(tf.math.minimum(stability_reward, 1.0), -1.0)
 
     # Optimizers
     train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
     train_goals_v = MpiAdamOptimizer(learning_rate=goals_vf_lr).minimize(goals_v_loss)
-    # train_actions_pi = MpiAdamOptimizer(learning_rate=action_pi_lr).minimize(actions_pi_loss)
-    # train_actions_v = MpiAdamOptimizer(learning_rate=action_vf_lr).minimize(actions_v_loss)
-    #
-    # train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(inverse_loss)
-    train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(forward_loss)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -499,63 +568,27 @@ def goaly(
 
     def update():
 
-        # # Train inverse and forward
-        # inverse_buf.append(trajectory_buf)
-        # inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, actions_ph], inverse_buf.get(reset=False))}
-        # inverse_action_loss_old, inverse_goal_loss_old  = sess.run([inverse_action_loss, inverse_goal_loss], feed_dict=inverse_inputs)
-        #
-        # for _ in range(train_inverse_iters):
-        #     sess.run(train_inverse, feed_dict=inverse_inputs)
-
-        # Train forward
-        inverse_inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, actions_ph], inverse_buf.get(reset=False))}
-        forward_loss_old  = sess.run([forward_loss], feed_dict=inverse_inputs)
-        for _ in range(train_inverse_iters):
-            sess.run(train_forward, feed_dict=inverse_inputs)
-
         # Prepare PPO training inputs
         inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, actions_ph], trajectory_buf.get())}
-
-        actions_ppo_inputs, actions_adv_mean = actions_ppo_buf.get()
-        inputs.update({k:v for k,v in zip([actions_adv_ph, actions_ret_ph, actions_logp_old_ph], actions_ppo_inputs)})
 
         goals_ppo_inputs, goals_adv_mean = goals_ppo_buf.get()
         inputs.update({k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_inputs)})
 
         # Train goals
         goals_pi_l_old, goals_v_l_old, goals_ent = sess.run([goals_pi_loss, goals_v_loss, goals_approx_ent], feed_dict=inputs)
-        stop_iter = train_ppo(train_goals_pi_iters, train_goals_pi, goals_approx_kl, goals_target_kl)
+        stop_iter = train_ppo(sess, train_goals_pi_iters, train_goals_pi, goals_approx_kl, goals_target_kl, inputs)
         logger.store(GoalsStopIter=stop_iter)
 
         for _ in range(train_goals_v_iters):
             sess.run(train_goals_v, feed_dict=inputs)
 
         # Train actions
-        actions_pi_l_old, actions_v_l_old, actions_ent = sess.run([actions_pi_loss, actions_v_loss, actions_approx_ent], feed_dict=inputs)
-        stop_iter = actions_policy.train_ppo(inputs)
-        logger.store(ActionsStopIter=stop_iter)
-
-        for _ in range(train_actions_v_iters):
-            sess.run(train_actions_v, feed_dict=inputs)
+        actions_policy.update(sess, trajectory_buf)
 
         # Log changes from update
-        actions_pi_l_new, actions_v_l_new,  actions_kl, actions_cf, \
-            goals_pi_l_new, goals_v_l_new, goals_kl, goals_cf, \
-            inverse_action_loss_new, inverse_goal_loss_new, forward_loss_new = \
-            sess.run([
-                actions_pi_loss, actions_v_loss, actions_approx_kl, actions_clipfrac, \
-                goals_pi_loss, goals_v_loss, goals_approx_kl, goals_clipfrac, \
-                inverse_action_loss, inverse_goal_loss, forward_loss],
-                feed_dict=inputs)
+        goals_pi_l_new, goals_v_l_new, goals_kl, goals_cf = \
+            sess.run([goals_pi_loss, goals_v_loss, goals_approx_kl, goals_clipfrac], feed_dict=inputs)
 
-        logger.store(LossActionsPi=actions_pi_l_old)
-        logger.store(LossActionsV=actions_v_l_old)
-        logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
-        logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
-        logger.store(ActionsAdvantageMean=actions_adv_mean)
-        logger.store(ActionsKL=actions_kl)
-        logger.store(ActionsEntropy=actions_ent)
-        logger.store(ActionsClipFrac=actions_cf)
         logger.store(LossGoalsPi=goals_pi_l_old)
         logger.store(LossGoalsV=goals_v_l_old)
         logger.store(DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old))
@@ -567,104 +600,53 @@ def goaly(
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-    goal, stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = 0, 0, 0, 0, 0, 0
+    goal, action_error, goal_error, forward_prediction_error, goal_predicted_v = 0, 0, 0, 0, 0
 
     ep_obs = [[]]
     episode = 0
 
-    def store_training_step(observations, new_observations, goal, goals_step_reward, actions,
-                            actions_reward_v, reward, goals_v_t, goals_logp_t, stability, actions_v_t,
+    def store_training_step(observations, new_observations, goal, actions,
+                            reward, goals_v_t, goals_logp_t,
                             forward_prediction_error):
         trajectory_buf.store(observations, new_observations, goal, actions)
 
         if not forward_error_for_curiosity_reward:
             forward_prediction_error = 0
 
-        if no_step_reward:
-            goals_ppo_buf.store(reward + forward_prediction_error, 0, goals_v_t, goals_logp_t)
-        else:
-            goals_ppo_buf.store(reward + forward_prediction_error, goals_step_reward, goals_v_t, goals_logp_t)
+        goals_ppo_buf.store(reward + forward_prediction_error, 0, goals_v_t, goals_logp_t)
 
-        logger.store(ActionsVVals=actions_v_t)
         logger.store(GoalsVVals=goals_v_t)
         logger.store(Goal=goal)
 
-        actions_policy.store()
-
-    def log_trace_step(epoch, episode, observations, actions, goal, reward, goals_v_t, \
-                       goals_step_reward_v, actions_reward_v, action_error, goal_error, \
-                       forward_prediction_error, goals_predicted_v):
+    def log_trace_step(epoch, episode, reward):
         if episode % trace_freq == 0:
             traces_logger.log_tabular('Epoch', epoch)
             traces_logger.log_tabular('Episode', episode)
-            for i in range(0, len(observations)):
-                traces_logger.log_tabular('Observations{}'.format(i), observations[i])
-            if isinstance(env.action_space, Discrete):
-                traces_logger.log_tabular('Actions0'.format(i), actions)
-            else:
-                for i in range(0, len(actions)):
-                    traces_logger.log_tabular('Actions{}'.format(i), actions[i])
             traces_logger.log_tabular('Reward', reward)
-            traces_logger.log_tabular('Goal', goal)
-            traces_logger.log_tabular('GoalPredicted', goals_predicted_v)
-            traces_logger.log_tabular('GoalsVVal', goals_v_t)
-            traces_logger.log_tabular('GoalsStepReward', goals_step_reward_v)
-            traces_logger.log_tabular('ActionsReward', actions_reward_v)
-            traces_logger.log_tabular('ActionError', action_error)
-            traces_logger.log_tabular('GoalError', goal_error)
-            traces_logger.log_tabular('ForwardPredictionError', forward_prediction_error)
 
             traces_logger.dump_tabular(file_only=True)
 
-    def handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len, stability):
-        terminal = done or (ep_len == max_ep_len)
+    def handle_episode_termination(episode, goal, prev_goal, observations, reward, ep_done, ep_ret, ep_len):
+        terminal = ep_done or (ep_len == max_ep_len)
         if terminal or (t==local_steps_per_epoch-1):
             episode += 1
             if not(terminal):
                 print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
             # if trajectory didn't reach terminal state, bootstrap value target
-            if done:
-                last_actions_val = actions_reward(reward, stability)
-                last_goals_val = goals_step_reward(reward, stability) + reward
+            if ep_done:
+                last_goals_val = reward
             else:
-                last_actions_val, last_goals_val = \
-                    sess.run([actions_v, goals_v],
-                             feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal] })
+                last_goals_val = sess.run([goals_v], feed_dict={x_ph: observations.reshape(1,-1) })
 
-            actions_ppo_buf.finish_path(last_actions_val)
             goals_ppo_buf.finish_path(last_goals_val)
 
             if terminal:
                 # only save EpRet / EpLen if trajectory finished
                 logger.store(EpRet=ep_ret, EpLen=ep_len)
 
-            observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
-        elif finish_action_path_on_new_goal:
-            # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
-            # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
+            observations, reward, ep_done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
-            if goal != prev_goal:
-                logger.store(GoalPathLen=actions_ppo_buf.path_len())
-                last_actions_val = actions_reward(reward, stability)
-                # debug: get last path value from values model
-                # last_actions_val = sess.run([actions_v], feed_dict={x_ph: observations.reshape(1,-1), goals_ph: [goal]})
-                actions_ppo_buf.finish_path(last_actions_val)
-
-        return episode, observations, reward, done, ep_ret, ep_len
-
-    def actions_reward(reward, stability):
-        r = stability
-        logger.store(ActionsReward=r)
-        return r
-
-    def goals_step_reward(reward, stability):
-        if no_path_len_reward:
-            r = stability
-        else:
-            r = stability + actions_ppo_buf.path_len()
-
-        logger.store(GoalsStepReward=r)
-        return r
+        return episode, observations, reward, ep_done, ep_ret, ep_len
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
@@ -675,36 +657,30 @@ def goaly(
             goal, goals_v_t, goals_logp_t = \
                 sess.run([goals_pi, goals_v, goals_logp_pi],
                          feed_dict={x_ph: observations.reshape(1,-1) })
+            goal = goal[0]
 
             actions, actions_store = actions_policy.get(sess, observations, goal)
 
-            goal = goal[0]
-            actions = actions[0]
             goals_v_t = goals_v_t[0]
 
-            goals_step_reward_v = goals_step_reward(reward, stability)
-            actions_reward_v = actions_reward(reward, stability)
+            new_observations, reward, done, _ = env.step(actions)
 
-            new_observations, new_reward, done, _ = env.step(actions)
-
-            actions_store(reward)
-            store_training_step(observations, new_observations, goal, goals_step_reward_v, actions,
-                                actions_reward_v, reward, goals_v_t, goals_logp_t, stability, actions_v_t, forward_prediction_error)
-
-            stability, action_error, goal_error, forward_prediction_error, goal_predicted_v = \
-                calculate_stability(observations, new_observations, actions, goal)
-
-            log_trace_step(epoch, episode, observations, actions, goal, new_reward,
-                           goals_v_t, goals_step_reward_v, actions_reward_v, action_error, goal_error,
-                           forward_prediction_error, goal_predicted_v)
-
-            observations = new_observations
-            reward = new_reward
             ep_ret += reward
             ep_len += 1
 
+            should_trace = episode % trace_freq == 0
+            handle_action_path_termination = actions_store(should_trace, reward, new_observations)
+            store_training_step(observations, new_observations, goal, actions,
+                                reward, goals_v_t, goals_logp_t, forward_prediction_error)
+
+            log_trace_step(epoch, episode, reward)
+
+            observations = new_observations
+
+            ep_stopped = terminal = done or (ep_len == max_ep_len) or (t==local_steps_per_epoch-1)
+            handle_action_path_termination(ep_stopped, done)
             episode, observations, reward, done, ep_ret, ep_len = \
-                handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len, stability)
+                handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len)
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
