@@ -118,7 +118,7 @@ class ObservationsActionsAndGoalsBuffer:
         self.act_buf[self.ptr] = act
         self.ptr += 1
 
-    def get(self, reset=True):
+    def get(self):
         """
         Call this at the end of an epoch to get all of the data from
         the buffer, with advantages appropriately normalized (shifted to have
@@ -131,10 +131,10 @@ class ObservationsActionsAndGoalsBuffer:
             to_return = [self.obs_buf[:self.ptr], self.new_obs_buf[:self.ptr], self.goals_buf[:self.ptr],
                          self.act_buf[:self.ptr]]
 
-        if reset:
-            self.ptr = 0
-
         return to_return
+
+    def reset(self):
+        self.ptr = 0
 
     def all_get(self):
         obs_buf = allgather(self.obs_buf)
@@ -207,7 +207,7 @@ class ActionsPolicy:
         self.env = env
         self.x_ph, self.x_next_ph, self.actions_ph = x_ph, x_next_ph, actions_ph
         self.prev_goal = None
-        self.train_pi_ters = train_pi_iters
+        self.train_pi_iters = train_pi_iters
         self.train_v_iters = train_v_iters
         self.target_kl = target_kl
         self.train_inverse_iters = train_inverse_iters
@@ -221,7 +221,7 @@ class ActionsPolicy:
 
         with tf.variable_scope('actions'):
             self.goals_pi_actions_input = tf.one_hot(self.goals_ph, num_goals)
-            self.actions_pi, self.actions_logp, self.actions_logp_pi, self.actions_v = actor_critic(
+            self.pi, self.actions_logp, self.actions_logp_pi, self.actions_v = actor_critic(
                 self.x_ph, self.goals_pi_actions_input, self.actions_ph, action_space=env.action_space, **ac_kwargs)
 
         obs_dim = env.observation_space.shape
@@ -235,7 +235,7 @@ class ActionsPolicy:
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
         logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
-        self.actions_pi_loss, self.actions_v_loss, self.actions_approx_kl, self.actions_approx_ent, self.actions_clipfrac = ppo_objectives(
+        self.pi_loss, self.v_loss, self.approx_kl, self.approx_ent, self.clipfrac = ppo_objectives(
             self.adv_ph, self.actions_v, self.ret_ph, self.actions_logp, self.logp_old_ph, clip_ratio)
 
         # Inverse Dynamics Model
@@ -281,15 +281,15 @@ class ActionsPolicy:
         # cap stability reward
         self.stability_reward =  tf.math.maximum(tf.math.minimum(self.stability_reward, 1.0), -1.0)
 
-        self.train_actions_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(self.actions_pi_loss)
-        self.train_actions_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(self.actions_v_loss)
+        self.train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(self.pi_loss)
+        self.train_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(self.v_loss)
 
         self.train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.inverse_loss)
         self.train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.forward_loss)
 
     def get(self, sess, observations, goal):
         actions, v_t, logp_t = \
-            sess.run([self.actions_pi, self.actions_v, self.actions_logp_pi],
+            sess.run([self.pi, self.actions_v, self.actions_logp_pi],
                      feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: np.array([goal]) })
 
         actions = actions[0]
@@ -375,7 +375,7 @@ class ActionsPolicy:
         # Train inverse and forward
         self.inverse_buf.append(trajectory_buf)
         inverse_inputs = \
-            {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], self.inverse_buf.get(reset=False))}
+            {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], self.inverse_buf.get())}
 
         for _ in range(self.train_inverse_iters):
             sess.run(self.train_inverse, feed_dict=inverse_inputs)
@@ -389,33 +389,35 @@ class ActionsPolicy:
         # Prepare PPO training inputs
         policy_inputs = {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], trajectory_buf.get())}
 
-        actions_ppo_inputs, actions_adv_mean = self.ppo_buf.get()
+        actions_ppo_inputs, adv_mean = self.ppo_buf.get()
         policy_inputs.update({k:v for k,v in zip([self.adv_ph, self.ret_ph, self.logp_old_ph], actions_ppo_inputs)})
 
         # Train actions
-        actions_pi_l_old, actions_v_l_old, actions_ent = sess.run([self.actions_pi_loss, self.actions_v_loss, self.actions_approx_ent], feed_dict=policy_inputs)
+        pi_loss_old, v_loss_old, entropy = sess.run([self.pi_loss, self.v_loss, self.approx_ent], feed_dict=policy_inputs)
 
-        stop_iter = train_ppo(sess, self.train_iters, train_pi, approx_kl, target_kl, policy_inputs)
-        logger.store(ActionsStopIter=stop_iter)
+        stop_iter = train_ppo(sess, self.train_pi_iters, self.train_pi, self.approx_kl, self.target_kl, policy_inputs)
+        self.logger.store(ActionsStopIter=stop_iter)
 
-        for _ in range(train_actions_v_iters):
-            sess.run(train_actions_v, feed_dict=policy_inputs)
+        for _ in range(self.train_v_iters):
+            sess.run(self.train_v, feed_dict=policy_inputs)
 
         # Log changes from update
-        actions_pi_l_new, actions_v_l_new,  actions_kl, actions_cf = \
-            sess.run([self.actions_pi_loss, self.actions_v_loss, self.actions_approx_kl, self.actions_clipfrac], feed_dict=policy_inputs)
+        pi_loss_new, v_loss_new,  actions_kl, clipfrac_v = \
+            sess.run([self.pi_loss, self.v_loss, self.approx_kl, self.clipfrac], feed_dict=policy_inputs)
 
-        logger.store(LossActionsPi=actions_pi_l_old)
-        logger.store(LossActionsV=actions_v_l_old)
-        logger.store(DeltaLossActionsPi=(actions_pi_l_new - actions_pi_l_old))
-        logger.store(DeltaLossActionsV=(actions_v_l_new - actions_v_l_old))
-        logger.store(ActionsAdvantageMean=actions_adv_mean)
-        logger.store(ActionsKL=actions_kl)
-        logger.store(ActionsEntropy=actions_ent)
-        logger.store(ActionsClipFrac=actions_cf)
-        logger.store(LossActionInverse=inverse_action_loss_v)
-        logger.store(LossGoalInverse=inverse_goal_loss_v)
-        logger.store(LossForward=forward_loss_v)
+        trajectory_buf.reset()
+
+        self.logger.store(LossActionsPi=pi_loss_old)
+        self.logger.store(LossActionsV=v_loss_old)
+        self.logger.store(DeltaLossActionsPi=(pi_loss_new - pi_loss_old))
+        self.logger.store(DeltaLossActionsV=(v_loss_new - v_loss_old))
+        self.logger.store(ActionsAdvantageMean=adv_mean)
+        self.logger.store(ActionsKL=actions_kl)
+        self.logger.store(ActionsEntropy=entropy)
+        self.logger.store(ActionsClipFrac=clipfrac_v)
+        self.logger.store(LossActionInverse=inverse_action_loss_v)
+        self.logger.store(LossGoalInverse=inverse_goal_loss_v)
+        self.logger.store(LossForward=forward_loss_v)
 
 def goaly(
         # Environment and policy
