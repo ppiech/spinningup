@@ -203,7 +203,7 @@ class ActionsPolicy:
                 inverse_kwargs=dict(), ac_kwargs=dict(),
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
                 actions_step_reward=True, finish_action_path_on_new_goal=True,
-                train_pi_iters=80, train_v_iters=80, target_kl=0.01,
+                train_pi_iters=80, train_value_iters=80, target_kl=0.01,
                 inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=20):
         self.logger = logger
         self.traces_logger = traces_logger
@@ -211,7 +211,7 @@ class ActionsPolicy:
         self.x_ph, self.x_next_ph, self.actions_ph = x_ph, x_next_ph, actions_ph
         self.prev_goal = None
         self.train_pi_iters = train_pi_iters
-        self.train_v_iters = train_v_iters
+        self.train_value_iters = train_value_iters
         self.target_kl = target_kl
         self.train_inverse_iters = train_inverse_iters
         self.actions_step_reward = actions_step_reward
@@ -224,7 +224,7 @@ class ActionsPolicy:
 
         with tf.variable_scope('actions'):
             self.goals_pi_actions_input = tf.one_hot(self.goals_ph, num_goals)
-            self.pi, self.actions_logp, self.actions_logp_pi, self.actions_v = actor_critic(
+            self.pi, self.logp, self.logp_pi, self.value = actor_critic(
                 self.x_ph, self.goals_pi_actions_input, self.actions_ph, action_space=env.action_space, **ac_kwargs)
 
         obs_dim = env.observation_space.shape
@@ -238,8 +238,8 @@ class ActionsPolicy:
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
         logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
-        self.pi_loss, self.v_loss, self.approx_kl, self.approx_ent, self.clipfrac = ppo_objectives(
-            self.adv_ph, self.actions_v, self.ret_ph, self.actions_logp, self.logp_old_ph, clip_ratio)
+        self.pi_loss, self.value_loss, self.approx_kl, self.approx_ent, self.clipfrac = ppo_objectives(
+            self.adv_ph, self.value, self.ret_ph, self.logp, self.logp_old_ph, clip_ratio)
 
         # Inverse Dynamics Model
         a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, self.goals_predicted = \
@@ -285,23 +285,23 @@ class ActionsPolicy:
         self.stability_reward =  tf.math.maximum(tf.math.minimum(self.stability_reward, 1.0), -1.0)
 
         self.train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(self.pi_loss)
-        self.train_v = MpiAdamOptimizer(learning_rate=vf_lr).minimize(self.v_loss)
+        self.train_value = MpiAdamOptimizer(learning_rate=vf_lr).minimize(self.value_loss)
 
         self.train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.inverse_loss)
         self.train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.forward_loss)
 
     def get(self, sess, observations, goal):
-        actions, v_t, logp_t = \
-            sess.run([self.pi, self.actions_v, self.actions_logp_pi],
+        actions, value_t, logp_t = \
+            sess.run([self.pi, self.value, self.logp_pi],
                      feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: np.array([goal]) })
 
         actions = actions[0]
 
-        store_lam = lambda should_trace, reward, new_observations: self.store(sess, should_trace, observations, new_observations, actions, goal, reward, v_t, logp_t)
+        store_lam = lambda should_trace, reward, new_observations: self.store(sess, should_trace, observations, new_observations, actions, goal, reward, value_t, logp_t)
         return actions, store_lam
 
     def calculate_stability(self, sess, observations, new_observations, actions, goal):
-        stability, action_error, goal_error, forward_prediction_error, goals_predicted_v, x_pred_v = \
+        stability, action_error, goal_error, forward_prediction_error, goals_predicted_t, x_pred_v = \
             sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.forward_error, self.goals_predicted, self.x_pred],
                       feed_dict={self.x_ph: np.array([observations]),
                                  self.x_next_ph: np.array([new_observations]),
@@ -310,7 +310,7 @@ class ActionsPolicy:
 
         self.logger.store(StabilityReward=stability, StabilityActionError=action_error, StabilityGoalError=goal_error, ForwardPredictionError=forward_prediction_error)
 
-        return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_v[0])
+        return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_t[0])
 
     def actions_reward(self, reward, stability):
         r = stability
@@ -318,14 +318,14 @@ class ActionsPolicy:
         return r
 
     def store(self, sess, should_trace, observations, new_observations, actions, goal, reward, v_t, logp_t):
-        stability, action_error, goal_error, forward_prediction_error, goals_predicted_v = \
+        stability, action_error, goal_error, forward_prediction_error, goals_predicted_t = \
             self.calculate_stability(sess, observations, new_observations, actions, goal)
-        actions_reward_v = self.actions_reward(reward, stability)
+        actions_reward_t = self.actions_reward(reward, stability)
 
         if self.actions_step_reward:
-            self.ppo_buf.store(reward, actions_reward_v, v_t, logp_t)
+            self.ppo_buf.store(reward, actions_reward_t, v_t, logp_t)
         else:
-            self.ppo_buf.store(reward + actions_reward_v, 0, v_t, logp_t)
+            self.ppo_buf.store(reward + actions_reward_t, 0, v_t, logp_t)
 
         self.logger.store(ActionsVVals=v_t)
         # logger.storeOne("Goal{}Reward".format(goal), reward)
@@ -340,8 +340,8 @@ class ActionsPolicy:
                 for i in range(0, len(actions)):
                     self.traces_logger.log_tabular('Actions{}'.format(i), actions[i])
             self.traces_logger.log_tabular('Goal', goal)
-            self.traces_logger.log_tabular('GoalPredicted', goals_predicted_v)
-            self.traces_logger.log_tabular('ActionsReward', actions_reward_v)
+            self.traces_logger.log_tabular('GoalPredicted', goals_predicted_t)
+            self.traces_logger.log_tabular('ActionsReward', actions_reward_t)
             self.traces_logger.log_tabular('ActionError', action_error)
             self.traces_logger.log_tabular('GoalError', goal_error)
             self.traces_logger.log_tabular('ForwardPredictionError', forward_prediction_error)
@@ -354,7 +354,7 @@ class ActionsPolicy:
             if ep_done:
                 last_actions_val = self.actions_reward(reward, stability)
             else:
-                last_actions_val = sess.run([self.actions_v], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
+                last_actions_val = sess.run([self.value], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
 
             self.ppo_buf.finish_path(last_actions_val)
 
@@ -380,12 +380,12 @@ class ActionsPolicy:
 
         for _ in range(self.train_inverse_iters):
             sess.run(self.train_inverse, feed_dict=inverse_inputs)
-        inverse_action_loss_v, inverse_goal_loss_v = \
+        inverse_action_loss_t, inverse_goal_loss_t = \
             sess.run([self.inverse_action_loss, self.inverse_goal_loss], feed_dict=inverse_inputs)
 
         for _ in range(self.train_inverse_iters):
             sess.run(self.train_forward, feed_dict=inverse_inputs)
-        forward_loss_v  = sess.run([self.forward_loss], feed_dict=inverse_inputs)
+        forward_loss_t  = sess.run([self.forward_loss], feed_dict=inverse_inputs)
 
         # Prepare PPO training inputs
         policy_inputs = {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], trajectory_buf.get())}
@@ -394,31 +394,31 @@ class ActionsPolicy:
         policy_inputs.update({k:v for k,v in zip([self.adv_ph, self.ret_ph, self.logp_old_ph], actions_ppo_inputs)})
 
         # Train actions
-        pi_loss_old, v_loss_old, entropy = sess.run([self.pi_loss, self.v_loss, self.approx_ent], feed_dict=policy_inputs)
+        pi_loss_old, value_loss_old, entropy = sess.run([self.pi_loss, self.value_loss, self.approx_ent], feed_dict=policy_inputs)
 
         stop_iter = train_ppo(sess, self.train_pi_iters, self.train_pi, self.approx_kl, self.target_kl, policy_inputs)
         self.logger.store(ActionsStopIter=stop_iter)
 
-        for _ in range(self.train_v_iters):
-            sess.run(self.train_v, feed_dict=policy_inputs)
+        for _ in range(self.train_value_iters):
+            sess.run(self.train_value, feed_dict=policy_inputs)
 
         # Log changes from update
-        pi_loss_new, v_loss_new,  actions_kl, clipfrac_v = \
-            sess.run([self.pi_loss, self.v_loss, self.approx_kl, self.clipfrac], feed_dict=policy_inputs)
+        pi_loss_new, value_loss_new,  actions_kl, clipfrac_t = \
+            sess.run([self.pi_loss, self.value_loss, self.approx_kl, self.clipfrac], feed_dict=policy_inputs)
 
         trajectory_buf.reset()
 
         self.logger.store(LossActionsPi=pi_loss_old)
-        self.logger.store(LossActionsV=v_loss_old)
+        self.logger.store(LossActionsV=value_loss_old)
         self.logger.store(DeltaLossActionsPi=(pi_loss_new - pi_loss_old))
-        self.logger.store(DeltaLossActionsV=(v_loss_new - v_loss_old))
+        self.logger.store(DeltaLossActionsV=(value_loss_new - value_loss_old))
         self.logger.store(ActionsAdvantageMean=adv_mean)
         self.logger.store(ActionsKL=actions_kl)
         self.logger.store(ActionsEntropy=entropy)
-        self.logger.store(ActionsClipFrac=clipfrac_v)
-        self.logger.store(LossActionInverse=inverse_action_loss_v)
-        self.logger.store(LossGoalInverse=inverse_goal_loss_v)
-        self.logger.store(LossForward=forward_loss_v)
+        self.logger.store(ActionsClipFrac=clipfrac_t)
+        self.logger.store(LossActionInverse=inverse_action_loss_t)
+        self.logger.store(LossGoalInverse=inverse_goal_loss_t)
+        self.logger.store(LossForward=forward_loss_t)
 
 def goaly(
         # Environment and policy
