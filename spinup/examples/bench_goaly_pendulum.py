@@ -11,7 +11,7 @@ if __name__ == '__main__':
 
     print(args.num_runs)
 
-    eg = ExperimentGrid(name='no_stability_in_goal')
+    eg = ExperimentGrid(name='v2.1')
     eg.add('env_name', 'Pendulum-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 400)
@@ -20,6 +20,7 @@ if __name__ == '__main__':
     eg.add('no_path_len_reward', [True])
     eg.add('no_step_reward', [True], '')
 
+    eg.add('goaly_kwargs:Goals:log_level', 2, '')
     eg.add('goaly_kwargs:Goals:finish_action_path_on_new_goal', [True], '')
     eg.add('goaly_kwargs:Goals:gamma', 0.99, '')
     eg.add('goaly_kwargs:Goals:actions_step_reward', False, '')
@@ -28,6 +29,7 @@ if __name__ == '__main__':
     eg.add('goaly_kwargs:Goals:forward_error_for_curiosity_reward', False, '')
 
 
+    eg.add('goaly_kwargs:Actions:log_level', 2, '')
     eg.add('goaly_kwargs:Actions:finish_action_path_on_new_goal', [True], '')
     eg.add('goaly_kwargs:Actions:gamma', 0.99, '')
     eg.add('goaly_kwargs:Actions:actions_step_reward', [True], '')

@@ -389,9 +389,6 @@ class GoalyPolicy:
             else:
                 last_val = sess.run([self.value], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
 
-            if self.name == 'Goals':
-                print("finish_path last_val={}".format(last_val))
-                print (self.ppo_buf.ret_buf)
             self.ppo_buf.finish_path(last_val)
 
             self.prev_goal = None
