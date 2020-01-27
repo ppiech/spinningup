@@ -311,7 +311,7 @@ class GoalyPolicy:
             sess.run([self.pi, self.value, self.logp_pi],
                      feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: np.array([goal]) })
 
-        actions = actions[0]
+        actions, value_t, logp_t = actions[0], value_t[0], logp_t[0]
 
         store_lam = lambda epoch, episode, reward, new_observations: \
             self.store(sess, epoch, episode, observations, new_observations, actions, goal, reward, value_t, logp_t)
@@ -358,6 +358,7 @@ class GoalyPolicy:
             self.traces_logger.log_tabular('Epoch', epoch)
             self.traces_logger.log_tabular('Episode', episode)
             self.traces_logger.log_tabular('Reward', reward)
+            self.traces_logger.log_tabular('VVals', v_t)
 
             for i in range(0, len(observations)):
                 self.traces_logger.log_tabular('Observations{}'.format(i), observations[i])
@@ -367,8 +368,8 @@ class GoalyPolicy:
                 for i in range(0, len(actions)):
                     self.traces_logger.log_tabular('Actions{}'.format(i), actions[i])
 
+            self.traces_logger.log_tabular('Goal', goal)
             if self.actions_step_reward:
-                self.traces_logger.log_tabular('Goal', goal)
                 self.traces_logger.log_tabular('GoalPredicted', goals_predicted_t)
                 self.traces_logger.log_tabular('Stability', stability)
                 self.traces_logger.log_tabular('ActionError', action_error)
@@ -384,11 +385,14 @@ class GoalyPolicy:
         if ep_stopped:
             # if trajectory didn't reach terminal state, bootstrap value target
             if ep_done:
-                last_actions_val = stability + reward
+                last_val = stability + reward
             else:
-                last_actions_val = sess.run([self.value], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
+                last_val = sess.run([self.value], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
 
-            self.ppo_buf.finish_path(last_actions_val)
+            if self.name == 'Goals':
+                print("finish_path last_val={}".format(last_val))
+                print (self.ppo_buf.ret_buf)
+            self.ppo_buf.finish_path(last_val)
 
             self.prev_goal = None
 
@@ -398,8 +402,8 @@ class GoalyPolicy:
 
             if goal != self.prev_goal:
                 self.log('PathLen', self.ppo_buf.path_len())
-                last_actions_val = reward + stability
-                self.ppo_buf.finish_path(last_actions_val)
+                last_val = reward + stability
+                self.ppo_buf.finish_path(last_val)
 
         self.prev_goal = goal
 
@@ -733,8 +737,8 @@ def goaly(
             # log_trace_step(epoch, episode, reward)
 
             observations = new_observations
+            ep_stopped = done or (ep_len == max_ep_len) or (t==local_steps_per_epoch-1)
 
-            ep_stopped = terminal = done or (ep_len == max_ep_len) or (t==local_steps_per_epoch-1)
             handle_action_path_termination(sess, ep_stopped, done)
             handle_goal_path_termination(sess, ep_stopped, done)
             episode, observations, reward, done, ep_ret, ep_len = \

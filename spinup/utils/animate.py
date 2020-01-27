@@ -62,8 +62,6 @@ def make_animation(all_logdirs, name='Actions', colormap_name='Spectral', num_vi
     goals_series = df['Goal']
     goals_runs_starts = goals_series.loc[goals_series.shift() != goals_series].index
 
-    goals_predicted_series = df['GoalPredicted']
-
     episodes_series = df['Episode']
     episode_starts = episodes_series.loc[episodes_series.shift() != episodes_series]
 
@@ -114,7 +112,7 @@ def make_animation(all_logdirs, name='Actions', colormap_name='Spectral', num_vi
 
         plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_series[episode_start:episode_end].values, dont_scale_rewards))
         if show_predictions:
-            plots.extend(plot_sccatter_traces(episode_start, episode_end, goals_predicted_series[episode_start:episode_end].values, dont_scale_rewards, 0.2))
+            plots.extend(plot_sccatter_traces(episode_start, episode_end, df['GoalPredicted'][episode_start:episode_end].values, dont_scale_rewards, 0.2))
 
         ax_charts[0].set(xlim=(episode_start, episode_end))
         colors = ['r', 'b', 'g', 'y', 'm', 'c']
