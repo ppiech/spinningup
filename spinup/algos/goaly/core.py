@@ -136,13 +136,11 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(env, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.sigmoid, inverse_buffer_size=3):
+def inverse_model(action_space, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.sigmoid, inverse_buffer_size=3):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
-    # x_next = tf.slice(x, [0, 0], [inverse_input_size - 1] + features_shape)
-    # x_inverse = tf.slice(x, [1, 0], [inverse_input_size - 1] + features_shape)
 
-    if isinstance(env.action_space, Discrete):
+    if isinstance(action_space, Discrete):
         # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
         # picking a value between two actions (like .5)
         a = tf.one_hot(tf.cast(a, tf.int32), 2)
