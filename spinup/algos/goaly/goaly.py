@@ -588,30 +588,11 @@ def goaly(
                                x_ph, x_next_ph, goals_ph, num_goals, actor_critic, steps_per_epoch,
                                 **goaly_kwargs.get('Goals', dict()))
 
-    # goals_adv_ph = core.placeholder(None, "goals_adv_ph")
-    # goals_ret_ph = core.placeholder(None, "goals_ret_ph")
-    # goals_logp_old_ph = core.placeholder(None, "goals_logp_old_ph")
-
-
     # Main outputs from computation graph
     with tf.variable_scope('goals'):
         goals_pi, goals_logp, goals_logp_pi, goals_v = actor_critic(
             x_ph, None, goals_ph, action_space=Discrete(num_goals), **ac_kwargs)
 
-    # Experience buffer
-    # goals_ppo_buf = PPOBuffer(local_steps_per_epoch, goals_gamma, goals_lam)
-    # trajectory_buf = ObservationsActionsAndGoalsBuffer(num_goals, obs_dim, act_dim, local_steps_per_epoch)
-
-    # # Count variables
-    # var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
-    # logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
-
-    # goals_pi_loss, goals_v_loss, goals_approx_kl, goals_approx_ent, goals_clipfrac = ppo_objectives(
-    #     goals_adv_ph, goals_v, goals_ret_ph, goals_logp, goals_logp_old_ph, goals_clip_ratio)
-
-    # Optimizers
-    # train_goals_pi = MpiAdamOptimizer(learning_rate=goals_pi_lr).minimize(goals_pi_loss)
-    # train_goals_v = MpiAdamOptimizer(learning_rate=goals_vf_lr).minimize(goals_v_loss)
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -626,37 +607,9 @@ def goaly(
 
     def update():
 
-        # Prepare PPO training inputs
-        # inputs = {k:v for k,v in zip([x_ph, x_next_ph, goals_ph, actions_ph], trajectory_buf.get())}
-
-        # goals_ppo_inputs, goals_adv_mean = goals_ppo_buf.get()
-        # inputs.update({k:v for k,v in zip([goals_adv_ph, goals_ret_ph, goals_logp_old_ph], goals_ppo_inputs)})
-
-        # Train goals
-        # goals_pi_l_old, goals_v_l_old, goals_ent = sess.run([goals_pi_loss, goals_v_loss, goals_approx_ent], feed_dict=inputs)
-        # stop_iter = train_ppo(sess, train_goals_pi_iters, train_goals_pi, goals_approx_kl, goals_target_kl, inputs)
-        # logger.store(GoalsStopIter=stop_iter)
-
-        # for _ in range(train_goals_v_iters):
-        #     sess.run(train_goals_v, feed_dict=inputs)
-
+        # Train policies
         goals_policy.update(sess)
-
-        # Train actions
         actions_policy.update(sess)
-
-        # Log changes from update
-        # goals_pi_l_new, goals_v_l_new, goals_kl, goals_cf = \
-        #     sess.run([goals_pi_loss, goals_v_loss, goals_approx_kl, goals_clipfrac], feed_dict=inputs)
-
-        # logger.store(LossGoalsPi=goals_pi_l_old)
-        # logger.store(LossGoalsV=goals_v_l_old)
-        # logger.store(DeltaLossGoalsPi=(goals_pi_l_new - goals_pi_l_old))
-        # logger.store(DeltaLossGoalsV=(goals_v_l_new - goals_v_l_old))
-        # logger.store(GoalsAdvantageMean=goals_adv_mean)
-        # logger.store(GoalsKL=goals_kl)
-        # logger.store(GoalsEntropy=goals_ent)
-        # logger.store(GoalsClipFrac=goals_cf)
 
     start_time = time.time()
     observations, reward, done, ep_ret, ep_len = env.reset(), 0, False, 0, 0
@@ -665,36 +618,12 @@ def goaly(
     ep_obs = [[]]
     episode = 0
 
-    # def store_training_step(observations, new_observations, goal, actions,
-    #                         rewar):
-    #     trajectory_buf.store(observations, new_observations, goal, actions)
-
-        # goals_ppo_buf.store(reward + forward_prediction_error, 0, goals_v_t, goals_logp_t)
-
-        # logger.store(GoalsVVals=goals_v_t)
-        # logger.store(Goal=goal)
-
-    # def log_trace_step(epoch, episode, reward):
-    #     if episode % trace_freq == 0:
-    #         traces_logger.log_tabular('Epoch', epoch)
-    #         traces_logger.log_tabular('Episode', episode)
-    #         traces_logger.log_tabular('Reward', reward)
-    #
-    #         traces_logger.dump_tabular(file_only=True)
-
     def handle_episode_termination(episode, goal, prev_goal, observations, reward, ep_done, ep_ret, ep_len):
         terminal = ep_done or (ep_len == max_ep_len)
         if terminal or (t==local_steps_per_epoch-1):
             episode += 1
             if not(terminal):
                 print('Warning: trajectory cut off by epoch at %d steps.'%ep_len)
-            # if trajectory didn't reach terminal state, bootstrap value target
-            # if ep_done:
-            #     last_goals_val = reward
-            # else:
-            #     last_goals_val = sess.run([goals_v], feed_dict={x_ph: observations.reshape(1,-1) })
-
-            # goals_ppo_buf.finish_path(last_goals_val)
 
             if terminal:
                 # only save EpRet / EpLen if trajectory finished
@@ -711,15 +640,7 @@ def goaly(
             prev_goal = goal
 
             goal, goals_store = goals_policy.get(sess, observations, 0)
-
-            # goal, goals_v_t, goals_logp_t = \
-            #     sess.run([goals_pi, goals_v, goals_logp_pi],
-            #              feed_dict={x_ph: observations.reshape(1,-1) })
-            # goal = goal[0]
-
             actions, actions_store = actions_policy.get(sess, observations, goal)
-
-            # goals_v_t = goals_v_t[0]
 
             new_observations, reward, done, _ = env.step(actions)
 
@@ -754,16 +675,6 @@ def goaly(
         logger.log_tabular('EpLen', average_only=True)
         logger.log_tabular('ActionsReward', average_only=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
-        # logger.log_tabular('LossGoalsPi', average_only=True)
-        # logger.log_tabular('LossGoalsV', average_only=True)
-        # logger.log_tabular('GoalsVVals', average_only=True)
-        # logger.log_tabular('GoalsEntropy', average_only=True)
-        # logger.log_tabular('GoalsAdvantageMean', average_only=True)
-        # logger.log_tabular('GoalsKL', average_only=True)
-        # logger.log_tabular('GoalsClipFrac', average_only=True)
-        # logger.log_tabular('GoalsStopIter', average_only=True)
-        # logger.log_tabular('LossGoalInverse', average_only=True)
-        # logger.log_tabular('LossForward', average_only=True)
 
         actions_policy.log_epoch()
         goals_policy.log_epoch()
