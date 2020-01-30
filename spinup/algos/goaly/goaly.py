@@ -584,15 +584,15 @@ def goaly(
 
     goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
 
+    goals2_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals2_ph")
+
     goals_policy = GoalyPolicy("Goals", logger, logger_kwargs, trace_freq, Discrete(num_goals), env.observation_space,
                                x_ph, x_next_ph, goals_ph, num_goals, actor_critic, steps_per_epoch,
                                 **goaly_kwargs.get('Goals', dict()))
 
-    # Main outputs from computation graph
-    with tf.variable_scope('goals'):
-        goals_pi, goals_logp, goals_logp_pi, goals_v = actor_critic(
-            x_ph, None, goals_ph, action_space=Discrete(num_goals), **ac_kwargs)
-
+    goals2_policy = GoalyPolicy("Goals2", logger, logger_kwargs, trace_freq, Discrete(num_goals), env.observation_space,
+                               x_ph, x_next_ph, goals_ph, num_goals, actor_critic, steps_per_epoch,
+                                **goaly_kwargs.get('Goals2', dict()))
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
@@ -608,6 +608,7 @@ def goaly(
     def update():
 
         # Train policies
+        goals2_policy.update(sess)
         goals_policy.update(sess)
         actions_policy.update(sess)
 
@@ -639,7 +640,8 @@ def goaly(
             # Every step, get: action, value, and logprob
             prev_goal = goal
 
-            goal, goals_store = goals_policy.get(sess, observations, 0)
+            goal2, goals2_store = goals2_policy.get(sess, observations, 0)
+            goal, goals_store = goals_policy.get(sess, observations, goal2)
             actions, actions_store = actions_policy.get(sess, observations, goal)
 
             new_observations, reward, done, _ = env.step(actions)
@@ -647,18 +649,16 @@ def goaly(
             ep_ret += reward
             ep_len += 1
 
-            handle_action_path_termination = actions_store(epoch, episode, reward, new_observations)
-            handle_goal_path_termination = goals_store(epoch, episode, reward, new_observations)
-
-            # trajectory_buf.store(observations, new_observations, goal, actions)
-
-            # log_trace_step(epoch, episode, reward)
+            handle_goals2_path_termination = goals2_store(epoch, episode, reward, new_observations)
+            handle_goals_path_termination = goals_store(epoch, episode, reward, new_observations)
+            handle_actions_path_termination = actions_store(epoch, episode, reward, new_observations)
 
             observations = new_observations
             ep_stopped = done or (ep_len == max_ep_len) or (t==local_steps_per_epoch-1)
 
-            handle_action_path_termination(sess, ep_stopped, done)
-            handle_goal_path_termination(sess, ep_stopped, done)
+            handle_goals2_path_termination(sess, ep_stopped, done)
+            handle_goals_path_termination(sess, ep_stopped, done)
+            handle_actions_path_termination(sess, ep_stopped, done)
             episode, observations, reward, done, ep_ret, ep_len = \
                 handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len)
 
@@ -676,8 +676,9 @@ def goaly(
         logger.log_tabular('ActionsReward', average_only=True)
         logger.log_tabular('TotalEnvInteracts', (epoch+1)*steps_per_epoch)
 
-        actions_policy.log_epoch()
+        goals2_policy.log_epoch()
         goals_policy.log_epoch()
+        actions_policy.log_epoch()
 
         logger.dump_tabular()
 
