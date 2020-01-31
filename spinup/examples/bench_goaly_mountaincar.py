@@ -23,7 +23,6 @@ if __name__ == '__main__':
     eg.add('goaly_kwargs:Goals2:reward_curiosity', True, '')
     eg.add('goaly_kwargs:Goals2:reward_external', True, '')
     eg.add('goaly_kwargs:Goals2:ac_kwargs:hidden_sizes', (32, 32), '')
-    eg.add('goaly_kwargs:Goals2:ac_kwargs:activation', tf.nn.relu, '')
 
     eg.add('goaly_kwargs:Goals:log_level', 2, '')
     eg.add('goaly_kwargs:Goals:finish_action_path_on_new_goal', [True], '')
@@ -32,7 +31,7 @@ if __name__ == '__main__':
     eg.add('goaly_kwargs:Goals:reward_curiosity', False, '')
     eg.add('goaly_kwargs:Goals:reward_external', False, '')
     eg.add('goaly_kwargs:Goals:ac_kwargs:hidden_sizes', (32, 32), '')
-    eg.add('goaly_kwargs:Goals:ac_kwargs:activation', tf.nn.relu, '')
+    eg.add('goaly_kwargs:Goals:inverse_kwargs:hidden_sizes', (16,), 'hid')
 
     eg.add('goaly_kwargs:Actions:log_level', 2, '')
     eg.add('goaly_kwargs:Actions:finish_action_path_on_new_goal', [True], '')
@@ -40,11 +39,8 @@ if __name__ == '__main__':
     eg.add('goaly_kwargs:Actions:reward_stability', True, '')
     eg.add('goaly_kwargs:Actions:reward_external', False, '')
     eg.add('goaly_kwargs:Actions:ac_kwargs:hidden_sizes', (32, 32), '')
-    eg.add('goaly_kwargs:Actions:ac_kwargs:activation', tf.nn.relu, '')
     eg.add('goaly_kwargs:Actions:inverse_buffer_size', 3, '')
-    eg.add('goaly_kwargs:Actions:inverse_kwargs:hidden_sizes', [(32, 32)], 'hid')
-    eg.add('goaly_kwargs:Actions:inverse_kwargs:activation', [tf.nn.relu], '')
-    eg.add('goaly_kwargs:Actions:inverse_kwargs:goals_output_activation', [tf.nn.sigmoid], '')
+    eg.add('goaly_kwargs:Actions:inverse_kwargs:hidden_sizes', (16,), 'hid')
 
 
     eg.run(goaly, num_cpu=args.cpu)

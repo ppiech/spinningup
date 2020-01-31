@@ -161,18 +161,19 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(action_space, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.sigmoid, inverse_buffer_size=3):
+def inverse_model(action_space, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.nn.relu, inverse_buffer_size=3):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
 
     if isinstance(action_space, Discrete):
         # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
         # picking a value between two actions (like .5)
-        a = tf.one_hot(tf.cast(a, tf.int32), 2)
-        a_dim = np.prod(a.get_shape().as_list()[1:])
-        a = tf.reshape(a, [-1, a_dim])
+        # a = tf.one_hot(tf.cast(a, tf.int32), 2)
+        # a_dim = np.prod(a.get_shape().as_list()[1:])
+        # a = tf.reshape(a, [-1, a_dim])
+        a = tf.one_hot(tf.cast(a, tf.int32), action_space.n)
 
-        actions_output_activation=tf.sigmoid
+        actions_output_activation=tf.nn.relu
     else:
         actions_output_activation=None
 
@@ -192,15 +193,16 @@ def inverse_model(action_space, x, x_next, a, goals, num_goals, hidden_sizes=(32
 """
 Forward Dynamics
 """
-def forward_model(x, a, x_next, is_action_space_discrete, hidden_sizes=(16,), activation=tf.nn.relu):
+def forward_model(x, a, x_next, action_space, hidden_sizes=(16,), activation=tf.nn.relu):
     features_shape = x.shape.as_list()[1:]
 
-    if is_action_space_discrete:
+    if isinstance(action_space, Discrete):
         # Convert 1/0 actions into one-hot actions.  This allows model to learn action values separately intead of
         # picking a value between two actions (like .5)
-        a = tf.one_hot(tf.cast(a, tf.int32), 2)
-        a_dim = np.prod(a.get_shape().as_list()[1:])
-        a = tf.reshape(a, [-1, a_dim])
+        # a = tf.one_hot(tf.cast(a, tf.int32), 2)
+        # a_dim = np.prod(a.get_shape().as_list()[1:])
+        # a = tf.reshape(a, [-1, a_dim])
+        a = tf.one_hot(tf.cast(a, tf.int32), action_space.n)
 
     return mlp(tf.concat([x, a], 1), list(hidden_sizes)+features_shape, activation, None)
 

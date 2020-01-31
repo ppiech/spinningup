@@ -183,7 +183,7 @@ class GoalyPolicy:
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
                 reward_stability=True, reward_external=True, finish_action_path_on_new_goal=True,
                 train_pi_iters=80, train_value_iters=80, target_kl=0.01,
-                inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=20,
+                inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=200,
                 reward_curiosity=False):
 
         self.name = name
@@ -236,28 +236,33 @@ class GoalyPolicy:
             self.adv_ph, self.value, self.ret_ph, self.logp, self.logp_old_ph, clip_ratio)
 
         # Inverse Dynamics Model
-        a_inverse, goals_one_hot, a_predicted, goals_predicted_logits, self.goals_predicted = \
+        a_inverse, goals_one_hot, a_predicted_logits, goals_predicted_logits, self.goals_predicted = \
             core.inverse_model(self.action_space, self.x_ph, self.x_next_ph, self.actions_ph, self.goals_ph, num_goals, **inverse_kwargs)
         a_range = core.space_range(self.action_space)
 
-        a_as_float = tf.cast(a_inverse, tf.float32)
+        a_as_float = tf.cast(a_inverse, tf.float32) # is this needed?
+        inverse_action_diff = tf.abs((a_as_float - a_predicted_logits) / a_range, name='inverse_action_diff')
+        if isinstance(self.action_space, Discrete):
+            self.a_predicted = tf.argmax(a_predicted_logits, axis=-1)
+            self.inverse_action_loss = tf.losses.softmax_cross_entropy(a_inverse, a_predicted_logits)
+            inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
+        else:
+            self.a_predicted = a_predicted_logits
+            self.inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted_logits)**2, name='inverse_action_loss') # For training inverse model
 
-        inverse_action_diff = tf.abs((a_as_float - a_predicted) / a_range, name='inverse_action_diff')
-        self.inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted)**2, name='inverse_action_loss') # For training inverse model
+        self.inverse_goal_loss = tf.losses.softmax_cross_entropy(goals_one_hot, goals_predicted_logits)
+        #self.inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
 
-        # if isinstance(env.action_space, Discrete):
-            # inverse_action_diff = tf.reshape(tf.reduce_mean(inverse_action_diff, axis=1), [-1, 1], 'inverse_action_diff')
-        self.inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
         self.inverse_loss = self.inverse_goal_loss + self.inverse_action_loss
 
         # Errors used for calculating return after each step.
         # Action error needs to be normalized wrt action amplitude, otherwise the error will drive the model behavior
-        # towards small amplitude actions.  This doesn't apply to discrete action spaces, where a_predicted is a set of
+        # towards small amplitude actions.  This doesn't apply to discrete action spaces, where a_predicted_logits is a set of
         # logits compared againt a_inverse that is a one-hot vector.
         if isinstance(self.action_space, Discrete):
             inverse_action_error_denominator = 1.0
         else:
-            inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted)) * 10 / a_range), 1e-4)
+            inverse_action_error_denominator = tf.math.maximum(((tf.abs(a_as_float + a_predicted_logits)) * 10 / a_range), 1e-4)
 
         self.inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
@@ -265,8 +270,7 @@ class GoalyPolicy:
         self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(self.goals_predicted - self.goals_ph, tf.float32)) * 2.0 / num_goals)
 
         # Forward model
-        is_action_space_discrete = isinstance(self.action_space, Discrete)
-        self.x_pred = core.forward_model(self.x_ph, self.actions_ph, self.x_next_ph, is_action_space_discrete)
+        self.x_pred = core.forward_model(self.x_ph, self.actions_ph, self.x_next_ph, self.action_space)
 
         forward_diff = tf.abs((tf.cast(self.x_ph, tf.float32) - self.x_pred), name='forward_diff')
         self.forward_error = tf.reduce_mean(forward_diff, name='forward_error')
@@ -296,8 +300,8 @@ class GoalyPolicy:
         return actions, store_lam
 
     def calculate_stability(self, sess, observations, new_observations, actions, goal):
-        stability, action_error, goal_error, goals_predicted_t = \
-            sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.goals_predicted],
+        stability, action_error, goal_error, goals_predicted_t, a_predicted_t = \
+            sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.goals_predicted, self.a_predicted],
                       feed_dict={self.x_ph: np.array([observations]),
                                  self.x_next_ph: np.array([new_observations]),
                                  self.actions_ph: np.array([actions]),
@@ -307,7 +311,7 @@ class GoalyPolicy:
         self.log('ActionError', action_error)
         self.log('GoalError', goal_error)
 
-        return stability, action_error, goal_error, int(goals_predicted_t[0])
+        return stability, action_error, goal_error, int(goals_predicted_t[0]), a_predicted_t[0]
 
     def calculate_curiosity(self, sess, observations, new_observations, actions):
         forward_prediction_error = sess.run([self.forward_error],
@@ -337,7 +341,7 @@ class GoalyPolicy:
             curiosity = 0
 
         if self.reward_stability:
-            stability, action_error, goal_error, goals_predicted_t = \
+            stability, action_error, goal_error, goals_predicted_t, a_predicted_t = \
                 self.calculate_stability(sess, observations, new_observations, actions, goal)
         else:
             stability = 0
@@ -364,6 +368,7 @@ class GoalyPolicy:
             self.traces_logger.log_tabular('Goal', goal)
             if self.reward_stability:
                 self.traces_logger.log_tabular('GoalPredicted', goals_predicted_t)
+                self.traces_logger.log_tabular('ActionPredicted', a_predicted_t)
                 self.traces_logger.log_tabular('Stability', stability)
                 self.traces_logger.log_tabular('ActionError', action_error)
                 self.traces_logger.log_tabular('GoalError', goal_error)
