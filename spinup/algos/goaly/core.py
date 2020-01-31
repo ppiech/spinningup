@@ -2,6 +2,8 @@ import numpy as np
 import tensorflow as tf
 import scipy.signal
 from gym.spaces import Box, Discrete, MultiBinary
+from spinup.utils.mpi_tools import mpi_avg
+
 
 EPS = 1e-8
 
@@ -104,6 +106,29 @@ def mlp_gaussian_policy(x, goals, a, hidden_sizes, activation, output_activation
     logp = gaussian_likelihood(a, mu, log_std)
     logp_pi = gaussian_likelihood(pi, mu, log_std)
     return pi, logp, logp_pi
+
+def ppo_objectives(adv_ph, val, ret_ph, logp, logp_old_ph, clip_ratio):
+    ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
+    min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
+    pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
+    v_loss = tf.reduce_mean((ret_ph - val)**2)
+
+    approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
+    approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
+    clipped = tf.logical_or(ratio > (1+clip_ratio), ratio < (1-clip_ratio))
+    clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
+
+    return pi_loss, v_loss, approx_kl, approx_ent, clipfrac
+
+# Training
+def train_ppo(sess, train_iters, train_pi, approx_kl, target_kl, inputs):
+    for i in range(train_iters):
+        _, kl = sess.run([train_pi, approx_kl], feed_dict=inputs)
+        kl = mpi_avg(kl)
+        if kl > 1.5 * target_kl:
+            # logger.log('Early stopping at step %d due to reaching max kl.'%i)
+            break
+    return i
 
 """
 Actor-Critics

@@ -174,29 +174,6 @@ class ObservationsActionsAndGoalsBuffer:
                 self.goals_buf[insert_at] = new_goals[mpi_proc_num][i]
                 self.act_buf[insert_at] = new_act[mpi_proc_num][i]
 
-def ppo_objectives(adv_ph, val, ret_ph, logp, logp_old_ph, clip_ratio):
-    ratio = tf.exp(logp - logp_old_ph)          # pi(a|s) / pi_old(a|s)
-    min_adv = tf.where(adv_ph>0, (1+clip_ratio)*adv_ph, (1-clip_ratio)*adv_ph)
-    pi_loss = -tf.reduce_mean(tf.minimum(ratio * adv_ph, min_adv))
-    v_loss = tf.reduce_mean((ret_ph - val)**2)
-
-    approx_kl = tf.reduce_mean(logp_old_ph - logp)      # a sample estimate for KL-divergence, easy to compute
-    approx_ent = tf.reduce_mean(-logp)                  # a sample estimate for entropy, also easy to compute
-    clipped = tf.logical_or(ratio > (1+clip_ratio), ratio < (1-clip_ratio))
-    clipfrac = tf.reduce_mean(tf.cast(clipped, tf.float32))
-
-    return pi_loss, v_loss, approx_kl, approx_ent, clipfrac
-
-# Training
-def train_ppo(sess, train_iters, train_pi, approx_kl, target_kl, inputs):
-    for i in range(train_iters):
-        _, kl = sess.run([train_pi, approx_kl], feed_dict=inputs)
-        kl = mpi_avg(kl)
-        if kl > 1.5 * target_kl:
-            # logger.log('Early stopping at step %d due to reaching max kl.'%i)
-            break
-    return i
-
 class GoalyPolicy:
 
     def __init__(self, name, logger, logger_kwargs, trace_freq, action_space, observation_space,
@@ -254,7 +231,7 @@ class GoalyPolicy:
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
         self.logger.log('\nNumber of parameters: \t actions_pi: %d, \t actions_v: %d\n'%var_counts)
 
-        self.pi_loss, self.value_loss, self.approx_kl, self.approx_ent, self.clipfrac = ppo_objectives(
+        self.pi_loss, self.value_loss, self.approx_kl, self.approx_ent, self.clipfrac = core.ppo_objectives(
             self.adv_ph, self.value, self.ret_ph, self.logp, self.logp_old_ph, clip_ratio)
 
         # Inverse Dynamics Model
@@ -430,7 +407,7 @@ class GoalyPolicy:
         # Train actions
         pi_loss_old, value_loss_old, entropy = sess.run([self.pi_loss, self.value_loss, self.approx_ent], feed_dict=policy_inputs)
 
-        stop_iter = train_ppo(sess, self.train_pi_iters, self.train_pi, self.approx_kl, self.target_kl, policy_inputs)
+        stop_iter = core.train_ppo(sess, self.train_pi_iters, self.train_pi, self.approx_kl, self.target_kl, policy_inputs)
         self.log('StopIter', stop_iter)
 
         for _ in range(self.train_value_iters):
