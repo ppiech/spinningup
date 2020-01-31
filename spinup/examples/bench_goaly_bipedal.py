@@ -15,7 +15,7 @@ if __name__ == '__main__':
     eg.add('goal_octaves', [6])
     eg.add('inverse_buffer_size', [3])
     eg.add('no_path_len_reward', [True])
-    eg.add('forward_error_for_curiosity_reward', [False], '')
+    eg.add('reward_curiosity', [False], '')
     eg.add('epochs', 500)
     eg.add('steps_per_epoch', 2000)
     eg.add('ac_kwargs:hidden_sizes', [(32,32)], 'hid')

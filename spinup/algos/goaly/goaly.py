@@ -181,10 +181,10 @@ class GoalyPolicy:
                 inverse_kwargs=dict(), ac_kwargs=dict(),
                 log_level=1,
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
-                actions_step_reward=True, finish_action_path_on_new_goal=True,
+                reward_stability=True, reward_external=True, finish_action_path_on_new_goal=True,
                 train_pi_iters=80, train_value_iters=80, target_kl=0.01,
                 inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=20,
-                forward_error_for_curiosity_reward=False):
+                reward_curiosity=False):
 
         self.name = name
         self.logger = logger
@@ -198,9 +198,10 @@ class GoalyPolicy:
         self.train_value_iters = train_value_iters
         self.target_kl = target_kl
         self.train_inverse_iters = train_inverse_iters
-        self.actions_step_reward = actions_step_reward
+        self.reward_stability = reward_stability
+        self.reward_external = reward_external
         self.finish_action_path_on_new_goal = finish_action_path_on_new_goal
-        self.forward_error_for_curiosity_reward = forward_error_for_curiosity_reward
+        self.reward_curiosity = reward_curiosity
 
         self.traces_logger = Logger(output_fname="traces-{}.txt".format(name), **logger_kwargs)
 
@@ -295,8 +296,8 @@ class GoalyPolicy:
         return actions, store_lam
 
     def calculate_stability(self, sess, observations, new_observations, actions, goal):
-        stability, action_error, goal_error, forward_prediction_error, goals_predicted_t, x_pred_v = \
-            sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.forward_error, self.goals_predicted, self.x_pred],
+        stability, action_error, goal_error, goals_predicted_t = \
+            sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.goals_predicted],
                       feed_dict={self.x_ph: np.array([observations]),
                                  self.x_next_ph: np.array([new_observations]),
                                  self.actions_ph: np.array([actions]),
@@ -305,9 +306,18 @@ class GoalyPolicy:
         self.log('StabilityReward', stability)
         self.log('ActionError', action_error)
         self.log('GoalError', goal_error)
-        self.log('ForwardPredictionError', forward_prediction_error)
 
-        return stability, action_error, goal_error, forward_prediction_error, int(goals_predicted_t[0])
+        return stability, action_error, goal_error, int(goals_predicted_t[0])
+
+    def calculate_curiosity(self, sess, observations, new_observations, actions):
+        forward_prediction_error = sess.run([self.forward_error],
+                                            feed_dict={self.x_ph: np.array([observations]),
+                                                       self.x_next_ph: np.array([new_observations]),
+                                                       self.actions_ph: np.array([actions])})
+
+        self.log('Curiosity', forward_prediction_error)
+
+        return forward_prediction_error[0]
 
     def log(self, key, value):
         self.logger.storeOne("{} - {}".format(key, self.name), value)
@@ -319,14 +329,20 @@ class GoalyPolicy:
 
         self.trajectory_buf.store(observations, new_observations, goal, actions)
 
-        if self.actions_step_reward:
-            stability, action_error, goal_error, forward_prediction_error, goals_predicted_t = \
-                self.calculate_stability(sess, observations, new_observations, actions, goal)
+        external = reward if self.reward_external else 0
 
-            self.ppo_buf.store(reward, stability, v_t, logp_t)
+        if self.reward_curiosity:
+            curiosity = self.calculate_curiosity(sess, observations, new_observations, actions)
+        else:
+            curiosity = 0
+
+        if self.reward_stability:
+            stability, action_error, goal_error, goals_predicted_t = \
+                self.calculate_stability(sess, observations, new_observations, actions, goal)
         else:
             stability = 0
-            self.ppo_buf.store(reward, 0, v_t, logp_t)
+
+        self.ppo_buf.store(external + curiosity, stability, v_t, logp_t)
 
         self.log('VVals', v_t)
         self.log('PathLen', self.ppo_buf.path_len())
@@ -346,14 +362,14 @@ class GoalyPolicy:
                     self.traces_logger.log_tabular('Actions{}'.format(i), actions[i])
 
             self.traces_logger.log_tabular('Goal', goal)
-            if self.actions_step_reward:
+            if self.reward_stability:
                 self.traces_logger.log_tabular('GoalPredicted', goals_predicted_t)
                 self.traces_logger.log_tabular('Stability', stability)
                 self.traces_logger.log_tabular('ActionError', action_error)
                 self.traces_logger.log_tabular('GoalError', goal_error)
 
-            if self.forward_error_for_curiosity_reward:
-                self.traces_logger.log_tabular('ForwardPredictionError', forward_prediction_error)
+            if self.reward_curiosity:
+                self.traces_logger.log_tabular('Curiosity', curiosity)
             self.traces_logger.dump_tabular(file_only=True)
 
         return lambda sess, ep_stopped, ep_done: self.handle_path_termination(sess, ep_stopped, ep_done, goal, observations, reward, stability)
@@ -393,7 +409,7 @@ class GoalyPolicy:
         inverse_action_loss_t, inverse_goal_loss_t = \
             sess.run([self.inverse_action_loss, self.inverse_goal_loss], feed_dict=inverse_inputs)
 
-        if self.forward_error_for_curiosity_reward:
+        if self.reward_curiosity:
             for _ in range(self.train_inverse_iters):
                 sess.run(self.train_forward, feed_dict=inverse_inputs)
             forward_loss_t  = sess.run([self.forward_loss], feed_dict=inverse_inputs)
@@ -421,13 +437,13 @@ class GoalyPolicy:
         self.log('Entropy', entropy)
         self.log('LossActionInverse', inverse_action_loss_t)
         self.log('LossGoalInverse', inverse_goal_loss_t)
-        if self.forward_error_for_curiosity_reward:
+        if self.reward_curiosity:
             self.log('LossForward', forward_loss_t)
 
     def log_epoch(self):
         if self.log_level > 0:
             self.log_tabular('StopIter', average_only=True)
-            if self.actions_step_reward:
+            if self.reward_stability:
                 self.log_tabular('PathLen', average_only=True)
                 self.log_tabular('ActionError', average_only=True)
                 self.log_tabular('GoalError', average_only=True)
@@ -441,9 +457,9 @@ class GoalyPolicy:
                 self.log_tabular('StabilityReward', average_only=True)
                 self.log_tabular('LossActionInverse', average_only=True)
                 self.log_tabular('LossGoalInverse', average_only=True)
-                if self.forward_error_for_curiosity_reward:
+                if self.reward_curiosity:
                     self.log_tabular('LossForward', average_only=True)
-                    self.log_tabular('ForwardPredictionError', average_only=True)
+                    self.log_tabular('Curiosity', average_only=True)
 
 
 
