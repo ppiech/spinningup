@@ -13,7 +13,7 @@ if __name__ == '__main__':
     eg.add('env_name', 'CartPole-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 100)
-    eg.add('goal_octaves', [6])
+    eg.add('num_goal_bits', [6])
     eg.add('inverse_buffer_size', [3])
     eg.add('no_step_reward', [True], '')
     eg.add('steps_per_epoch', 4000)

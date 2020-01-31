@@ -100,22 +100,24 @@ class ObservationsActionsAndGoalsBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, num_goals, obs_dim, act_dim, size):
-        self.num_goals = num_goals
+    def __init__(self, num_goal_bits, obs_dim, act_dim, size):
+        self.num_goals = 2**num_goal_bits
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.new_obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.goals_buf = np.zeros(size , dtype=np.float32)
+        self.goals_num_buf = np.zeros(size , dtype=np.float32)
+        self.goals_bin_buf = np.zeros(core.combined_shape(size, num_goal_bits), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.ptr, self.max_size = 0, size
 
-    def store(self, obs, new_obs, goal, act):
+    def store(self, obs, new_obs, goal_num, goal_bin, act):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
         self.new_obs_buf[self.ptr] = new_obs
-        self.goals_buf[self.ptr] = goal
+        self.goals_num_buf[self.ptr] = goal_num
+        self.goals_bin_buf[self.ptr] = goal_bin
         self.act_buf[self.ptr] = act
         self.ptr += 1
 
@@ -127,10 +129,10 @@ class ObservationsActionsAndGoalsBuffer:
         """
 
         if self.ptr == self.max_size:
-            to_return = [self.obs_buf, self.new_obs_buf, self.goals_buf, self.act_buf]
+            to_return = [self.obs_buf, self.new_obs_buf, self.goals_num_buf, self.goals_bin_buf, self.act_buf]
         else:
-            to_return = [self.obs_buf[:self.ptr], self.new_obs_buf[:self.ptr], self.goals_buf[:self.ptr],
-                         self.act_buf[:self.ptr]]
+            to_return = [self.obs_buf[:self.ptr], self.new_obs_buf[:self.ptr], self.goals_num_buf[:self.ptr],
+                         self.goals_bin_buf[:self.ptr], self.act_buf[:self.ptr]]
 
         return to_return
 
@@ -140,10 +142,11 @@ class ObservationsActionsAndGoalsBuffer:
     def all_get(self):
         obs_buf = allgather(self.obs_buf)
         new_obs_buf = allgather(self.new_obs_buf)
-        goals_buf = allgather(self.goals_buf)
+        goals_num_buf = allgather(self.goals_num_buf)
+        goals_bin_buf = allgather(self.goals_bin_buf)
         act_buf = allgather(self.act_buf)
 
-        to_return = [obs_buf, new_obs_buf, goals_buf, act_buf]
+        to_return = [obs_buf, new_obs_buf, goals_num_buf, goals_bin_buf, act_buf]
 
         return to_return
 
@@ -156,14 +159,14 @@ class ObservationsActionsAndGoalsBuffer:
         buffer, with the new data.
         """
 
-        new_obs, new_new_obs, new_goals, new_act = buffer.all_get()
+        new_obs, new_new_obs, new_goal_nums, new_goal_bins, new_act = buffer.all_get()
         buf_len = buffer.ptr
 
         for mpi_proc_num in range(len(new_obs)):
             for i in range(buf_len):
                 if self.ptr == self.max_size:
                     section = self.max_size / self.num_goals
-                    goal_num = new_goals[mpi_proc_num][i]
+                    goal_num = new_goal_nums[mpi_proc_num][i]
                     insert_at = int(np.random.normal(section * goal_num, section)) % self.max_size
                 else:
                     insert_at = self.ptr
@@ -171,13 +174,14 @@ class ObservationsActionsAndGoalsBuffer:
 
                 self.obs_buf[insert_at] = new_obs[mpi_proc_num][i]
                 self.new_obs_buf[insert_at] = new_new_obs[mpi_proc_num][i]
-                self.goals_buf[insert_at] = new_goals[mpi_proc_num][i]
+                self.goals_num_buf[insert_at] = new_goal_nums[mpi_proc_num][i]
+                self.goals_bin_buf[insert_at] = new_goal_bins[mpi_proc_num][i]
                 self.act_buf[insert_at] = new_act[mpi_proc_num][i]
 
 class GoalyPolicy:
 
     def __init__(self, name, logger, logger_kwargs, trace_freq, action_space, observation_space,
-                x_ph, x_next_ph, actions_ph, num_goals, actor_critic, steps_per_epoch,
+                x_ph, x_next_ph, actions_ph, num_goal_bits, actor_critic, steps_per_epoch,
                 inverse_kwargs=dict(), ac_kwargs=dict(),
                 log_level=1,
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
@@ -193,7 +197,8 @@ class GoalyPolicy:
         self.observation_space = observation_space
         self.log_level = log_level
         self.x_ph, self.x_next_ph, self.actions_ph = x_ph, x_next_ph, actions_ph
-        self.prev_goal = None
+        self.num_goal_bits = num_goal_bits
+        self.prev_goal_num = None
         self.train_pi_iters = train_pi_iters
         self.train_value_iters = train_value_iters
         self.target_kl = target_kl
@@ -206,27 +211,29 @@ class GoalyPolicy:
         self.traces_logger = Logger(output_fname="traces-{}.txt".format(name), **logger_kwargs)
 
         with tf.variable_scope(self.name):
-            self.init_models(steps_per_epoch, num_goals, actor_critic, gamma, lam, pi_lr, vf_lr, ac_kwargs, inverse_buffer_size,
+            self.init_models(steps_per_epoch, actor_critic, gamma, lam, pi_lr, vf_lr, ac_kwargs, inverse_buffer_size,
                              clip_ratio, inverse_kwargs, inverse_lr)
 
-    def init_models(self, steps_per_epoch, num_goals, actor_critic, gamma, lam, pi_lr, vf_lr, ac_kwargs, inverse_buffer_size,
+    def init_models(self, steps_per_epoch, actor_critic, gamma, lam, pi_lr, vf_lr, ac_kwargs, inverse_buffer_size,
                     clip_ratio, inverse_kwargs, inverse_lr):
+
+        self.num_goals = 2**self.num_goal_bits
         self.adv_ph = core.placeholder(None, 'adv_ph')
         self.ret_ph = core.placeholder(None, 'ret_ph')
         self.logp_old_ph = core.placeholder(None, 'logp_old_ph')
-        self.goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name='goals_ph')
+        self.goals_bin_ph = tf.placeholder(dtype=tf.float32, shape=(None, self.num_goal_bits), name="goals_bin_ph")
+        self.goals_num_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_num_ph")
 
-        self.goals_pi_actions_input = tf.one_hot(self.goals_ph, num_goals)
         self.pi, self.logp, self.logp_pi, self.value = actor_critic(
-            self.x_ph, self.goals_pi_actions_input, self.actions_ph, action_space=self.action_space, **ac_kwargs)
+            self.x_ph, self.goals_bin_ph, self.actions_ph, action_space=self.action_space, **ac_kwargs)
 
         obs_dim = self.observation_space.shape
         act_dim = self.action_space.shape
 
         local_steps_per_epoch = int(steps_per_epoch / num_procs())
         self.ppo_buf = PPOBuffer(local_steps_per_epoch, gamma, lam)
-        self.trajectory_buf = ObservationsActionsAndGoalsBuffer(num_goals, obs_dim, act_dim, local_steps_per_epoch)
-        self.inverse_buf = ObservationsActionsAndGoalsBuffer(num_goals, obs_dim, act_dim, steps_per_epoch*inverse_buffer_size)
+        self.trajectory_buf = ObservationsActionsAndGoalsBuffer(self.num_goal_bits, obs_dim, act_dim, local_steps_per_epoch)
+        self.inverse_buf = ObservationsActionsAndGoalsBuffer(self.num_goal_bits, obs_dim, act_dim, steps_per_epoch*inverse_buffer_size)
 
         # Count variables
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -236,8 +243,8 @@ class GoalyPolicy:
             self.adv_ph, self.value, self.ret_ph, self.logp, self.logp_old_ph, clip_ratio)
 
         # Inverse Dynamics Model
-        a_inverse, goals_one_hot, a_predicted_logits, goals_predicted_logits, self.goals_predicted = \
-            core.inverse_model(self.action_space, self.x_ph, self.x_next_ph, self.actions_ph, self.goals_ph, num_goals, **inverse_kwargs)
+        a_inverse, a_predicted_logits, goals_predicted_logits, self.goals_predicted_bin = \
+            core.inverse_model(self.action_space, self.x_ph, self.x_next_ph, self.actions_ph, self.goals_bin_ph, self.num_goal_bits, **inverse_kwargs)
         a_range = core.space_range(self.action_space)
 
         a_as_float = tf.cast(a_inverse, tf.float32) # is this needed?
@@ -250,8 +257,7 @@ class GoalyPolicy:
             self.a_predicted = a_predicted_logits
             self.inverse_action_loss = tf.reduce_mean((a_as_float - a_predicted_logits)**2, name='inverse_action_loss') # For training inverse model
 
-        self.inverse_goal_loss = tf.losses.softmax_cross_entropy(goals_one_hot, goals_predicted_logits)
-        #self.inverse_goal_loss = tf.reduce_mean((tf.cast(goals_one_hot - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
+        self.inverse_goal_loss = tf.reduce_mean((tf.cast(self.goals_bin_ph - goals_predicted_logits, tf.float32)**2), name='inverse_goal_loss')
 
         self.inverse_loss = self.inverse_goal_loss + self.inverse_action_loss
 
@@ -267,7 +273,7 @@ class GoalyPolicy:
         self.inverse_action_error = tf.reduce_mean(inverse_action_diff / inverse_action_error_denominator)
 
         # when calculating goal error for stability reward, compare numerical goal value
-        self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(self.goals_predicted - self.goals_ph, tf.float32)) * 2.0 / num_goals)
+        # self.inverse_goal_error = tf.reduce_mean(tf.abs(tf.cast(self.goals_predicted_bin - self.goals_num_ph, tf.float32)) * 2.0 / num_goals)
 
         # Forward model
         self.x_pred = core.forward_model(self.x_ph, self.actions_ph, self.x_next_ph, self.action_space)
@@ -277,10 +283,10 @@ class GoalyPolicy:
         self.forward_loss = tf.reduce_mean((self.forward_error)**2, name='forward_loss')
 
         # by default use invese action error in stability reward
-        self.stability_reward = 1 + 2*self.inverse_action_error * self.inverse_goal_error - self.inverse_action_error - self.inverse_goal_error
+        # self.stability_reward = 1 + 2*self.inverse_action_error * self.inverse_goal_error - self.inverse_action_error - self.inverse_goal_error
 
         # cap stability reward
-        self.stability_reward =  tf.math.maximum(tf.math.minimum(self.stability_reward, 1.0), -1.0)
+        # self.stability_reward =  tf.math.maximum(tf.math.minimum(self.stability_reward, 1.0), -1.0)
 
         self.train_pi = MpiAdamOptimizer(learning_rate=pi_lr).minimize(self.pi_loss)
         self.train_value = MpiAdamOptimizer(learning_rate=vf_lr).minimize(self.value_loss)
@@ -288,30 +294,41 @@ class GoalyPolicy:
         self.train_inverse = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.inverse_loss)
         self.train_forward = MpiAdamOptimizer(learning_rate=inverse_lr).minimize(self.forward_loss)
 
-    def get(self, sess, observations, goal):
+    def get(self, sess, observations, goal_num):
+        goal_bin = core.goal_num_to_bin(goal_num, self.num_goal_bits)
         actions, value_t, logp_t = \
             sess.run([self.pi, self.value, self.logp_pi],
-                     feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: np.array([goal]) })
+                     feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_bin_ph: np.array([goal_bin]) })
 
         actions, value_t, logp_t = actions[0], value_t[0], logp_t[0]
 
         store_lam = lambda epoch, episode, reward, new_observations: \
-            self.store(sess, epoch, episode, observations, new_observations, actions, goal, reward, value_t, logp_t)
+            self.store(sess, epoch, episode, observations, new_observations, actions, goal_num, goal_bin, reward, value_t, logp_t)
         return actions, store_lam
 
-    def calculate_stability(self, sess, observations, new_observations, actions, goal):
-        stability, action_error, goal_error, goals_predicted_t, a_predicted_t = \
-            sess.run([self.stability_reward, self.inverse_action_error, self.inverse_goal_error, self.goals_predicted, self.a_predicted],
+    def calculate_stability(self, sess, observations, new_observations, actions, goal_num, goal_bin):
+        action_error, goals_predicted_bin_t, a_predicted_t = \
+            sess.run([self.inverse_action_error, self.goals_predicted_bin, self.a_predicted],
                       feed_dict={self.x_ph: np.array([observations]),
                                  self.x_next_ph: np.array([new_observations]),
                                  self.actions_ph: np.array([actions]),
-                                 self.goals_ph: np.array([goal])})
+                                 self.goals_bin_ph: np.array([goal_bin])})
+
+        goal_predicted_num_t = core.goal_bin_to_num(goals_predicted_bin_t[0])
+
+        goal_error = abs((goal_num - goal_predicted_num_t) / self.num_goals)
+
+        # by default use invese action error in stability reward
+        stability = 1 + 2*action_error * goal_error - action_error - goal_error
+
+        # cap stability reward
+        stability =  max(min(stability, 1.0), -1.0)
 
         self.log('StabilityReward', stability)
         self.log('ActionError', action_error)
         self.log('GoalError', goal_error)
 
-        return stability, action_error, goal_error, int(goals_predicted_t[0]), a_predicted_t[0]
+        return stability, action_error, goal_error, int(goal_predicted_num_t), a_predicted_t[0]
 
     def calculate_curiosity(self, sess, observations, new_observations, actions):
         forward_prediction_error = sess.run([self.forward_error],
@@ -329,9 +346,9 @@ class GoalyPolicy:
     def log_tabular(self, key, value=None, with_min_and_max=False, average_only=False):
         self.logger.log_tabular("{} - {}".format(key, self.name), value, with_min_and_max, average_only)
 
-    def store(self, sess, epoch, episode, observations, new_observations, actions, goal, reward, v_t, logp_t):
+    def store(self, sess, epoch, episode, observations, new_observations, actions, goal_num, goal_bin, reward, v_t, logp_t):
 
-        self.trajectory_buf.store(observations, new_observations, goal, actions)
+        self.trajectory_buf.store(observations, new_observations, goal_num, goal_bin, actions)
 
         external = reward if self.reward_external else 0
 
@@ -341,8 +358,8 @@ class GoalyPolicy:
             curiosity = 0
 
         if self.reward_stability:
-            stability, action_error, goal_error, goals_predicted_t, a_predicted_t = \
-                self.calculate_stability(sess, observations, new_observations, actions, goal)
+            stability, action_error, goal_error, goal_predicted_num_t, a_predicted_t = \
+                self.calculate_stability(sess, observations, new_observations, actions, goal_num, goal_bin)
         else:
             stability = 0
 
@@ -365,9 +382,9 @@ class GoalyPolicy:
                 for i in range(0, len(actions)):
                     self.traces_logger.log_tabular('Actions{}'.format(i), actions[i])
 
-            self.traces_logger.log_tabular('Goal', goal)
+            self.traces_logger.log_tabular('Goal', goal_num)
             if self.reward_stability:
-                self.traces_logger.log_tabular('GoalPredicted', goals_predicted_t)
+                self.traces_logger.log_tabular('GoalPredicted', goal_predicted_num_t)
                 self.traces_logger.log_tabular('ActionPredicted', a_predicted_t)
                 self.traces_logger.log_tabular('Stability', stability)
                 self.traces_logger.log_tabular('ActionError', action_error)
@@ -377,9 +394,9 @@ class GoalyPolicy:
                 self.traces_logger.log_tabular('Curiosity', curiosity)
             self.traces_logger.dump_tabular(file_only=True)
 
-        return lambda sess, ep_stopped, ep_done: self.handle_path_termination(sess, ep_stopped, ep_done, goal, observations, reward, stability)
+        return lambda sess, ep_stopped, ep_done: self.handle_path_termination(sess, ep_stopped, ep_done, goal_num, observations, reward, stability)
 
-    def handle_path_termination(self, sess, ep_stopped, ep_done, goal, observations, reward, stability):
+    def handle_path_termination(self, sess, ep_stopped, ep_done, goal_num, observations, reward, stability):
         if ep_stopped:
             # if trajectory didn't reach terminal state, bootstrap value target
             if ep_done:
@@ -389,25 +406,25 @@ class GoalyPolicy:
 
             self.ppo_buf.finish_path(last_val)
 
-            self.prev_goal = None
+            self.prev_goal_num = None
 
         elif self.finish_action_path_on_new_goal:
             # Finish paths for actions based on goals and not episodes.  Stability rewards for later goals should not
             # add to the rewards in the current goal.  This leads all goals to attenuate to most stable state.
 
-            if goal != self.prev_goal:
+            if goal_num != self.prev_goal_num:
                 self.log('PathLen', self.ppo_buf.path_len())
                 last_val = reward + stability
                 self.ppo_buf.finish_path(last_val)
 
-        self.prev_goal = goal
+        self.prev_goal_numn = goal_num
 
     def update(self, sess):
 
         # Train inverse and forward
         self.inverse_buf.append(self.trajectory_buf)
         inverse_inputs = \
-            {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], self.inverse_buf.get())}
+            {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_num_ph, self.goals_bin_ph, self.actions_ph], self.inverse_buf.get())}
 
         for _ in range(self.train_inverse_iters):
             sess.run(self.train_inverse, feed_dict=inverse_inputs)
@@ -420,7 +437,7 @@ class GoalyPolicy:
             forward_loss_t  = sess.run([self.forward_loss], feed_dict=inverse_inputs)
 
         # Prepare PPO training inputs
-        policy_inputs = {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_ph, self.actions_ph], self.trajectory_buf.get())}
+        policy_inputs = {k:v for k,v in zip([self.x_ph, self.x_next_ph, self.goals_num_ph, self.goals_bin_ph, self.actions_ph], self.trajectory_buf.get())}
 
         actions_ppo_inputs, adv_mean = self.ppo_buf.get()
         policy_inputs.update({k:v for k,v in zip([self.adv_ph, self.ret_ph, self.logp_old_ph], actions_ppo_inputs)})
@@ -473,7 +490,7 @@ def goaly(
         env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(),
         steps_per_epoch=4000, epochs=50, max_ep_len=1000,
         # Goals
-        goal_octaves=3, goal_error_base=1,
+        num_goal_bits=3, goal_error_base=1,
         goals_gamma=0.9, goals_clip_ratio=0.2, goals_pi_lr=3e-4, goals_vf_lr=1e-3,
         train_goals_pi_iters=80, train_goals_v_iters=80, goals_lam=0.97, goals_target_kl=0.01,
         # Actions
@@ -570,14 +587,14 @@ def goaly(
     env = env_fn()
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
-    num_goals = 2**goal_octaves
+    num_goals = 2**num_goal_bits
     local_steps_per_epoch = int(steps_per_epoch / num_procs())
 
     # Inputs to computation graph
     x_ph, x_next_ph, actions_ph = core.placeholders_from_env(env)
 
     actions_policy = GoalyPolicy("Actions", logger, logger_kwargs, trace_freq, env.action_space, env.observation_space,
-                                 x_ph, x_next_ph, actions_ph, num_goals, actor_critic, steps_per_epoch,
+                                 x_ph, x_next_ph, actions_ph, num_goal_bits, actor_critic, steps_per_epoch,
                                  **goaly_kwargs.get('Actions', dict()))
 
     goals_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals_ph")
@@ -585,11 +602,11 @@ def goaly(
     goals2_ph = tf.placeholder(dtype=tf.int32, shape=(None, ), name="goals2_ph")
 
     goals_policy = GoalyPolicy("Goals", logger, logger_kwargs, trace_freq, Discrete(num_goals), env.observation_space,
-                               x_ph, x_next_ph, goals_ph, num_goals, actor_critic, steps_per_epoch,
+                               x_ph, x_next_ph, goals_ph, num_goal_bits, actor_critic, steps_per_epoch,
                                 **goaly_kwargs.get('Goals', dict()))
 
     goals2_policy = GoalyPolicy("Goals2", logger, logger_kwargs, trace_freq, Discrete(num_goals), env.observation_space,
-                               x_ph, x_next_ph, goals_ph, num_goals, actor_critic, steps_per_epoch,
+                               x_ph, x_next_ph, goals_ph, num_goal_bits, actor_critic, steps_per_epoch,
                                 **goaly_kwargs.get('Goals2', dict()))
 
     sess = tf.Session()
@@ -617,7 +634,7 @@ def goaly(
     ep_obs = [[]]
     episode = 0
 
-    def handle_episode_termination(episode, goal, prev_goal, observations, reward, ep_done, ep_ret, ep_len):
+    def handle_episode_termination(episode, goal, observations, reward, ep_done, ep_ret, ep_len):
         terminal = ep_done or (ep_len == max_ep_len)
         if terminal or (t==local_steps_per_epoch-1):
             episode += 1
@@ -636,8 +653,6 @@ def goaly(
     for epoch in range(epochs):
         for t in range(local_steps_per_epoch):
             # Every step, get: action, value, and logprob
-            prev_goal = goal
-
             goal2, goals2_store = goals2_policy.get(sess, observations, 0)
             goal, goals_store = goals_policy.get(sess, observations, goal2)
             actions, actions_store = actions_policy.get(sess, observations, goal)
@@ -658,7 +673,7 @@ def goaly(
             handle_goals_path_termination(sess, ep_stopped, done)
             handle_actions_path_termination(sess, ep_stopped, done)
             episode, observations, reward, done, ep_ret, ep_len = \
-                handle_episode_termination(episode, goal, prev_goal, observations, reward, done, ep_ret, ep_len)
+                handle_episode_termination(episode, goal, observations, reward, done, ep_ret, ep_len)
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):

@@ -12,7 +12,7 @@ if __name__ == '__main__':
     eg = ExperimentGrid(name='v2_inv_balance')
     eg.add('env_name', 'BipedalWalker-v2', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
-    eg.add('goal_octaves', [6])
+    eg.add('num_goal_bits', [6])
     eg.add('inverse_buffer_size', [3])
     eg.add('no_path_len_reward', [True])
     eg.add('reward_curiosity', [False], '')

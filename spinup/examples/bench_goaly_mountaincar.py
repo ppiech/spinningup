@@ -14,7 +14,7 @@ if __name__ == '__main__':
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 2000)
     eg.add('steps_per_epoch', 2000)
-    eg.add('goal_octaves', 5)
+    eg.add('num_goal_bits', 5)
 
     eg.add('goaly_kwargs:Goals2:log_level', 2, '')
     eg.add('goaly_kwargs:Goals2:finish_action_path_on_new_goal', [True], '')

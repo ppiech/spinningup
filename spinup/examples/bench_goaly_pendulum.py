@@ -16,7 +16,7 @@ if __name__ == '__main__':
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 400)
     eg.add('steps_per_epoch', 2400)
-    eg.add('goal_octaves', [6])
+    eg.add('num_goal_bits', [6])
     eg.add('no_path_len_reward', [True])
     eg.add('no_step_reward', [True], '')
 

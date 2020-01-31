@@ -161,7 +161,7 @@ Inverse Dynamics
 def action_activation(x):
     return tf.round(x)
 
-def inverse_model(action_space, x, x_next, a, goals, num_goals, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.nn.relu, inverse_buffer_size=3):
+def inverse_model(action_space, x, x_next, a, goals, num_goal_bits, hidden_sizes=(32,32), activation=tf.nn.relu, goals_output_activation=tf.nn.relu, inverse_buffer_size=3):
     inverse_input_size = tf.shape(x)[0]
     features_shape = x.shape.as_list()[1:]
 
@@ -177,18 +177,16 @@ def inverse_model(action_space, x, x_next, a, goals, num_goals, hidden_sizes=(32
     else:
         actions_output_activation=None
 
-    goals_one_hot = tf.one_hot(goals, num_goals)
-
     num_actions = a.get_shape().as_list()[-1]
 
     x = tf.concat([x_next, x], 1)
     hidden_x = hidden(x, list(hidden_sizes), activation)
     action_logits = mlp(hidden_x, [num_actions], activation, actions_output_activation)
-    goals_logits = mlp(hidden_x, [num_goals], activation, goals_output_activation)
+    goals_logits = mlp(hidden_x, [num_goal_bits], activation, goals_output_activation)
 
-    goals_predicted = tf.argmax(goals_logits, axis=-1, output_type=tf.int32)
+    goals_predicted = tf.math.round(goals_logits)
 
-    return a, goals_one_hot, action_logits, goals_logits, goals_predicted
+    return a, action_logits, goals_logits, goals_predicted
 
 """
 Forward Dynamics
@@ -219,3 +217,16 @@ def space_range(space):
 """
 Goal Calculations
 """
+def goal_num_to_bin(goal_num, num_goal_bits):
+    goal_bin = []
+    for i in range(0, num_goal_bits):
+        goal_bin.append(1 if goal_num & (1 << i) else 0)
+
+    return np.array(goal_bin)
+
+def goal_bin_to_num(goal_bin):
+    goal_num = 0
+    for i in range(0, len(goal_bin)):
+        goal_num = goal_num + goal_bin[i] * 2**i
+
+    return goal_num
