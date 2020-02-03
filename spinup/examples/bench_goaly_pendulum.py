@@ -11,7 +11,7 @@ if __name__ == '__main__':
 
     print(args.num_runs)
 
-    eg = ExperimentGrid(name='v2.1-3')
+    eg = ExperimentGrid(name='v2.1-3_inverse_not_balanced')
     eg.add('env_name', 'Pendulum-v0', '', True)
     eg.add('seed', [10*i for i in range(args.num_runs)])
     eg.add('epochs', 400)
@@ -43,9 +43,9 @@ if __name__ == '__main__':
     eg.add('goaly_kwargs:Actions:ac_kwargs:hidden_sizes', (32, 32), '')
     eg.add('goaly_kwargs:Actions:ac_kwargs:activation', tf.nn.relu, '')
     eg.add('goaly_kwargs:Actions:inverse_buffer_size', 3, '')
+    eg.add('goaly_kwargs:Actions:inverse_balance_by_goal', [True, False], '')
     eg.add('goaly_kwargs:Actions:inverse_kwargs:hidden_sizes', [(32, 32)], 'hid')
     eg.add('goaly_kwargs:Actions:inverse_kwargs:activation', [tf.nn.relu], '')
-    eg.add('goaly_kwargs:Actions:inverse_kwargs:goals_output_activation', [tf.nn.sigmoid], '')
 
 
     eg.run(goaly, num_cpu=args.cpu)

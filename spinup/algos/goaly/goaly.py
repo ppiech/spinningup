@@ -100,7 +100,7 @@ class ObservationsActionsAndGoalsBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, num_goal_bits, obs_dim, act_dim, size):
+    def __init__(self, num_goal_bits, obs_dim, act_dim, size, balance_by_goal=False):
         self.num_goals = 2**num_goal_bits
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.new_obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
@@ -108,6 +108,7 @@ class ObservationsActionsAndGoalsBuffer:
         self.goals_bin_buf = np.zeros(core.combined_shape(size, num_goal_bits), dtype=np.float32)
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.ptr, self.max_size = 0, size
+        self.balance_by_goal = balance_by_goal
 
     def store(self, obs, new_obs, goal_num, goal_bin, act):
         """
@@ -165,9 +166,12 @@ class ObservationsActionsAndGoalsBuffer:
         for mpi_proc_num in range(len(new_obs)):
             for i in range(buf_len):
                 if self.ptr == self.max_size:
-                    section = self.max_size / self.num_goals
-                    goal_num = new_goal_nums[mpi_proc_num][i]
-                    insert_at = int(np.random.normal(section * goal_num, section)) % self.max_size
+                    if self.balance_by_goal:
+                        section = self.max_size / self.num_goals
+                        goal_num = new_goal_nums[mpi_proc_num][i]
+                        insert_at = int(np.random.normal(section * goal_num, section)) % self.max_size
+                    else:
+                        insert_at = np.random.uniform(0, self.max_size)
                 else:
                     insert_at = self.ptr
                     self.ptr += 1
@@ -187,7 +191,7 @@ class GoalyPolicy:
                 gamma=0.99, lam=0.97, clip_ratio=0.2, pi_lr=3e-4, vf_lr=1e-3,
                 reward_stability=True, reward_external=True, finish_action_path_on_new_goal=True,
                 train_pi_iters=80, train_value_iters=80, target_kl=0.01,
-                inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=200,
+                inverse_buffer_size=3, inverse_lr=1e-3, train_inverse_iters=200, inverse_balance_by_goal=True,
                 reward_curiosity=False):
 
         self.name = name
@@ -212,10 +216,10 @@ class GoalyPolicy:
 
         with tf.variable_scope(self.name):
             self.init_models(steps_per_epoch, actor_critic, gamma, lam, pi_lr, vf_lr, ac_kwargs, inverse_buffer_size,
-                             clip_ratio, inverse_kwargs, inverse_lr)
+                             clip_ratio, inverse_kwargs, inverse_lr, inverse_balance_by_goal)
 
     def init_models(self, steps_per_epoch, actor_critic, gamma, lam, pi_lr, vf_lr, ac_kwargs, inverse_buffer_size,
-                    clip_ratio, inverse_kwargs, inverse_lr):
+                    clip_ratio, inverse_kwargs, inverse_lr, inverse_balance_by_goal):
 
         self.num_goals = 2**self.num_goal_bits
         self.adv_ph = core.placeholder(None, 'adv_ph')
@@ -233,7 +237,7 @@ class GoalyPolicy:
         local_steps_per_epoch = int(steps_per_epoch / num_procs())
         self.ppo_buf = PPOBuffer(local_steps_per_epoch, gamma, lam)
         self.trajectory_buf = ObservationsActionsAndGoalsBuffer(self.num_goal_bits, obs_dim, act_dim, local_steps_per_epoch)
-        self.inverse_buf = ObservationsActionsAndGoalsBuffer(self.num_goal_bits, obs_dim, act_dim, steps_per_epoch*inverse_buffer_size)
+        self.inverse_buf = ObservationsActionsAndGoalsBuffer(self.num_goal_bits, obs_dim, act_dim, steps_per_epoch*inverse_buffer_size, inverse_balance_by_goal)
 
         # Count variables
         var_counts = tuple(core.count_vars(scope) for scope in ['actions_pi', 'actions_v'])
@@ -394,15 +398,15 @@ class GoalyPolicy:
                 self.traces_logger.log_tabular('Curiosity', curiosity)
             self.traces_logger.dump_tabular(file_only=True)
 
-        return lambda sess, ep_stopped, ep_done: self.handle_path_termination(sess, ep_stopped, ep_done, goal_num, observations, reward, stability)
+        return lambda sess, ep_stopped, ep_done: self.handle_path_termination(sess, ep_stopped, ep_done, goal_num, goal_bin, observations, reward, stability)
 
-    def handle_path_termination(self, sess, ep_stopped, ep_done, goal_num, observations, reward, stability):
+    def handle_path_termination(self, sess, ep_stopped, ep_done, goal_num, goal_bin, observations, reward, stability):
         if ep_stopped:
             # if trajectory didn't reach terminal state, bootstrap value target
             if ep_done:
                 last_val = stability + reward
             else:
-                last_val = sess.run([self.value], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_ph: [goal]})
+                last_val = sess.run([self.value], feed_dict={self.x_ph: observations.reshape(1,-1), self.goals_bin_ph: [goal_bin]})
 
             self.ppo_buf.finish_path(last_val)
 
